@@ -5,16 +5,25 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 COMPOSE_ARGS=(-f docker-compose.yml -f docker-compose.gpu-test.yml)
-DO_BUILD=0
-SKIP_PUBLIC_CHECK=0
+BUILD_IMAGES=1
+PUBLIC_CHECK=1
+
+log() {
+  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
+}
+
+warn() {
+  printf '[%s] [warn] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
+}
 
 usage() {
   cat <<'EOF'
-Usage: ./start_app.sh [--build] [--skip-public-check]
+Usage: ./start_app.sh [--build] [--no-build] [--skip-public-check]
 
 Options:
-  --build               Rebuild images before starting.
-  --skip-public-check   Skip the https://jetsonocrai.cc readiness check.
+  --build               Force image rebuild before starting (default behavior).
+  --no-build            Start using existing images only.
+  --skip-public-check   Skip https://jetsonocrai.cc readiness check.
   -h, --help            Show this help message.
 EOF
 }
@@ -22,10 +31,13 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --build)
-      DO_BUILD=1
+      BUILD_IMAGES=1
+      ;;
+    --no-build)
+      BUILD_IMAGES=0
       ;;
     --skip-public-check)
-      SKIP_PUBLIC_CHECK=1
+      PUBLIC_CHECK=0
       ;;
     -h|--help)
       usage
@@ -55,26 +67,27 @@ check_http_ready() {
   local attempt=1
 
   while (( attempt <= max_attempts )); do
-    if curl -fsS --max-time 5 "$url" >/dev/null; then
-      echo "[ok] $label ready: $url"
+    if curl -fsS --max-time 5 "$url" >/dev/null 2>/dev/null; then
+      log "[ok] $label ready: $url"
       return 0
     fi
+    log "$label pending ($attempt/$max_attempts): $url"
     sleep "$sleep_seconds"
     (( attempt += 1 ))
   done
 
-  echo "[warn] $label not ready after $((max_attempts * sleep_seconds))s: $url"
+  warn "$label not ready after $((max_attempts * sleep_seconds))s: $url"
   return 1
 }
 
 check_cloudflared() {
   if ! command -v systemctl >/dev/null 2>&1; then
-    echo "[warn] systemctl not found, cannot verify cloudflared service."
+    warn "systemctl not found; cannot verify cloudflared service."
     return 0
   fi
 
   if ! systemctl list-unit-files cloudflared.service --no-legend >/dev/null 2>&1; then
-    echo "[warn] cloudflared.service is not installed on this host."
+    warn "cloudflared.service is not installed on this host."
     return 0
   fi
 
@@ -83,10 +96,10 @@ check_cloudflared() {
   enabled="$(systemctl is-enabled cloudflared 2>/dev/null || true)"
 
   if [[ "$active" == "active" ]]; then
-    echo "[ok] cloudflared service is active (enabled: $enabled)."
+    log "[ok] cloudflared service is active (enabled: $enabled)."
   else
-    echo "[warn] cloudflared service is not active (state: $active, enabled: $enabled)."
-    echo "       Run: sudo systemctl restart cloudflared"
+    warn "cloudflared service is not active (state: $active, enabled: $enabled)."
+    warn "Run: sudo systemctl restart cloudflared"
   fi
 }
 
@@ -98,33 +111,32 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Starting OCR stack with Docker Compose..."
-if (( DO_BUILD == 1 )); then
+if (( BUILD_IMAGES == 1 )); then
+  log "Starting OCR stack with Docker Compose (rebuild enabled)..."
   docker compose "${COMPOSE_ARGS[@]}" up -d --build
 else
+  log "Starting OCR stack with Docker Compose (no rebuild)..."
+  warn "Using --no-build may run older frontend code from existing images."
   docker compose "${COMPOSE_ARGS[@]}" up -d
 fi
 
-echo
-echo "Compose service status:"
+log "Compose service status:"
 docker compose "${COMPOSE_ARGS[@]}" ps
 
-echo
-echo "Checking local service readiness..."
-check_http_ready "http://localhost:8080/healthz" "web-app"
-check_http_ready "http://localhost:8080/sessions/recent" "web-app sessions API"
+log "Checking local service readiness..."
+check_http_ready "http://localhost:8080/healthz" "web-app" 50 2
+check_http_ready "http://localhost:8080/sessions/recent" "web-app sessions API" 50 2
 
-echo
-echo "Checking Cloudflare tunnel service..."
+log "Checking Cloudflare tunnel service..."
 check_cloudflared
 
-if (( SKIP_PUBLIC_CHECK == 0 )); then
-  echo
-  echo "Checking public endpoint..."
-  check_http_ready "https://jetsonocrai.cc/" "public app" 20 3 || true
+if (( PUBLIC_CHECK == 1 )); then
+  log "Checking public endpoint..."
+  check_http_ready "https://jetsonocrai.cc/" "public app" 25 3 || true
+else
+  log "Public endpoint check skipped."
 fi
 
-echo
-echo "Launch completed."
-echo "Local app:  http://localhost:8080"
-echo "Public app: https://jetsonocrai.cc"
+log "Launch completed."
+log "Local app:  http://localhost:8080"
+log "Public app: https://jetsonocrai.cc"

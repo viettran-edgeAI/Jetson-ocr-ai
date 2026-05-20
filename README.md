@@ -57,7 +57,21 @@ Optional flags:
 
 ```bash
 ./start_app.sh --build
+./start_app.sh --no-build
 ./start_app.sh --skip-public-check
+```
+
+Safely shut the stack down:
+
+```bash
+./stop_app.sh
+```
+
+Optional shutdown flags:
+
+```bash
+./stop_app.sh --remove-volumes
+./stop_app.sh --stop-cloudflared
 ```
 
 The local origin is `http://localhost:8080`, but production validation should be done against `https://jetsonocrai.cc`. Public traffic should go to `web-app`; OCR and LLM services are addressed internally by Compose service name.
