@@ -8,6 +8,7 @@ const state = {
   currentMarkdown: "",
   selectionMode: false,
   selectedSessionIds: new Set(),
+  recentSessionIds: [],
 };
 
 let copyFeedbackTimer = null;
@@ -39,6 +40,7 @@ const els = {
   logoutButton: document.querySelector("#logoutButton"),
   helpButton: document.querySelector("#helpButton"),
   selectSessionsButton: document.querySelector("#selectSessionsButton"),
+  selectAllSessionsButton: document.querySelector("#selectAllSessionsButton"),
   deleteSelectedButton: document.querySelector("#deleteSelectedButton"),
   cancelSelectionButton: document.querySelector("#cancelSelectionButton"),
   selectionSummary: document.querySelector("#selectionSummary"),
@@ -156,6 +158,7 @@ function bindEvents() {
   on(els.logoutButton, "click", () => setStatus("Logout is not configured in this single-user build."));
   on(els.helpButton, "click", () => setStatus("Help center is not configured in this single-user build."));
   on(els.selectSessionsButton, "click", enterSelectionMode);
+  on(els.selectAllSessionsButton, "click", toggleSelectAllSessions);
   on(els.cancelSelectionButton, "click", exitSelectionMode);
   on(els.deleteSelectedButton, "click", deleteSelectedSessions);
 
@@ -484,6 +487,7 @@ function renderMessages(messages) {
 }
 
 function renderRecentSessions(sessions) {
+  state.recentSessionIds = (sessions || []).map((session) => session.id);
   reconcileSelectedSessions(sessions);
   updateSelectionUi();
   if (!sessions.length) {
@@ -620,6 +624,9 @@ function setControlsBusy(isBusy) {
   }
   if (els.selectSessionsButton) {
     els.selectSessionsButton.disabled = isBusy;
+  }
+  if (els.selectAllSessionsButton) {
+    els.selectAllSessionsButton.disabled = isBusy || !(state.recentSessionIds || []).length;
   }
   if (els.deleteSelectedButton) {
     els.deleteSelectedButton.disabled = isBusy || !state.selectedSessionIds.size;
@@ -843,6 +850,24 @@ function toggleSessionSelection(id, forceChecked) {
   renderSessionSelectionState();
 }
 
+function toggleSelectAllSessions() {
+  if (!state.selectionMode) return;
+  const visibleIds = state.recentSessionIds || [];
+  if (!visibleIds.length) return;
+
+  const allSelected = visibleIds.every((id) => state.selectedSessionIds.has(id));
+  if (allSelected) {
+    state.selectedSessionIds.clear();
+  } else {
+    visibleIds.forEach((id) => {
+      state.selectedSessionIds.add(id);
+    });
+  }
+
+  updateSelectionUi();
+  renderSessionSelectionState();
+}
+
 function renderSessionSelectionState() {
   els.sessionList.querySelectorAll(".session-row").forEach((row) => {
     const id = row.dataset.sessionId;
@@ -862,6 +887,14 @@ function updateSelectionUi() {
   if (els.deleteSelectedButton) {
     els.deleteSelectedButton.hidden = !state.selectionMode;
     els.deleteSelectedButton.disabled = state.isBusy || !state.selectedSessionIds.size;
+  }
+  if (els.selectAllSessionsButton) {
+    const visibleIds = state.recentSessionIds || [];
+    const hasVisible = visibleIds.length > 0;
+    const allSelected = hasVisible && visibleIds.every((id) => state.selectedSessionIds.has(id));
+    els.selectAllSessionsButton.hidden = !state.selectionMode;
+    els.selectAllSessionsButton.disabled = state.isBusy || !hasVisible;
+    els.selectAllSessionsButton.textContent = allSelected ? "Clear all" : "Select all";
   }
   if (els.cancelSelectionButton) {
     els.cancelSelectionButton.hidden = !state.selectionMode;

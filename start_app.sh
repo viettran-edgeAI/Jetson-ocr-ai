@@ -59,6 +59,20 @@ require_cmd() {
   fi
 }
 
+cleanup_failed_startup() {
+  warn "Cleaning up partially started stack..."
+  docker compose "${COMPOSE_ARGS[@]}" down --remove-orphans || true
+  log "Cleanup complete."
+}
+
+report_failure_and_cleanup() {
+  warn "$1"
+  docker compose "${COMPOSE_ARGS[@]}" ps -a || true
+  docker compose "${COMPOSE_ARGS[@]}" logs --no-color --tail=160 llm ocr web-app || true
+  cleanup_failed_startup
+  exit 1
+}
+
 check_http_ready() {
   local url="$1"
   local label="$2"
@@ -113,19 +127,27 @@ fi
 
 if (( BUILD_IMAGES == 1 )); then
   log "Starting OCR stack with Docker Compose (rebuild enabled)..."
-  docker compose "${COMPOSE_ARGS[@]}" up -d --build
+  if ! docker compose "${COMPOSE_ARGS[@]}" up -d --build; then
+    report_failure_and_cleanup "Compose startup failed."
+  fi
 else
   log "Starting OCR stack with Docker Compose (no rebuild)..."
   warn "Using --no-build may run older frontend code from existing images."
-  docker compose "${COMPOSE_ARGS[@]}" up -d
+  if ! docker compose "${COMPOSE_ARGS[@]}" up -d; then
+    report_failure_and_cleanup "Compose startup failed."
+  fi
 fi
 
 log "Compose service status:"
 docker compose "${COMPOSE_ARGS[@]}" ps
 
 log "Checking local service readiness..."
-check_http_ready "http://localhost:8080/healthz" "web-app" 50 2
-check_http_ready "http://localhost:8080/sessions/recent" "web-app sessions API" 50 2
+if ! check_http_ready "http://localhost:8080/healthz" "web-app" 50 2; then
+  report_failure_and_cleanup "web-app health endpoint did not become ready."
+fi
+if ! check_http_ready "http://localhost:8080/sessions/recent" "web-app sessions API" 50 2; then
+  report_failure_and_cleanup "web-app sessions API did not become ready."
+fi
 
 log "Checking Cloudflare tunnel service..."
 check_cloudflared

@@ -406,8 +406,8 @@ h1 {
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   background:
-    radial-gradient(circle at 56% 32%, rgba(107, 82, 247, 0.08), transparent 17rem),
-    rgba(255, 255, 255, 0.7);
+    radial-gradient(circle at 56% 32%, rgba(57, 132, 214, 0.07), transparent 17rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(247, 250, 255, 0.72));
 }
 
 .empty-output {
@@ -440,7 +440,7 @@ h1 {
   gap: 12px;
   padding: 14px 20px;
   border-bottom: 1px solid var(--line);
-  background: rgba(248, 250, 255, 0.94);
+  background: rgba(247, 250, 255, 0.94);
   backdrop-filter: blur(10px);
 }
 
@@ -452,12 +452,10 @@ h1 {
   text-transform: uppercase;
 }
 
-.ocr-footer {
+.ocr-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 10px;
-  padding: 0 20px 18px;
 }
 
 .copy-status {
@@ -473,7 +471,7 @@ h1 {
   border: 1px solid var(--line-strong);
   border-radius: 7px;
   color: #21345f;
-  background: #fff;
+  background: linear-gradient(180deg, #ffffff, #f8fbff);
   font-weight: 800;
 }
 
@@ -562,7 +560,7 @@ h1 {
 
 .answer-result {
   border-top: 1px solid var(--line);
-  background: rgba(250, 251, 255, 0.7);
+  background: rgba(247, 250, 255, 0.72);
 }
 
 .chat-message {
@@ -580,7 +578,7 @@ h1 {
 }
 
 .chat-role {
-  color: #6a789e;
+  color: #68799d;
   font-size: 12px;
   font-weight: 800;
 }
@@ -597,8 +595,8 @@ h1 {
 
 .chat-message.user .chat-bubble {
   color: #fff;
-  border-color: #4d37df;
-  background: linear-gradient(180deg, #654df1, #4d33dc);
+  border-color: #2357c7;
+  background: linear-gradient(180deg, #2f75d6, #245ac3);
 }
 
 .chat-message.user .chat-bubble code {

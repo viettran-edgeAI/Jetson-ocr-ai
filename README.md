@@ -76,6 +76,15 @@ Optional shutdown flags:
 
 The local origin is `http://localhost:8080`, but production validation should be done against `https://jetsonocrai.cc`. Public traffic should go to `web-app`; OCR and LLM services are addressed internally by Compose service name.
 
+Cold-start optimization is enabled by default in `ocr-service`:
+
+- `OCR_PRELOAD_PIPELINE_ON_STARTUP=1`
+- `OCR_WARMUP_ON_STARTUP=1`
+
+This shifts OCR model load and first-pass warmup from the first uploaded file to container startup so first user OCR latency stays close to steady-state behavior.
+
+To reduce GPU-memory startup contention, Compose starts `llm` first and starts `ocr` (with preload/warmup) only after `llm` is healthy.
+
 ## Public Access
 
 The production public hostname is:

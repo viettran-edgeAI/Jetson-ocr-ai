@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import os
 import shutil
+import threading
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -16,11 +19,82 @@ APP_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.environ.get("OCR_DATA_DIR", APP_ROOT / "data"))
 UPLOAD_DIR = DATA_DIR / "uploads"
 RESULT_DIR = DATA_DIR / "results"
+WARMUP_IMAGE_PATH = DATA_DIR / ".ocr_warmup.png"
+
+logger = logging.getLogger("ocr_service.main")
 
 for path in (UPLOAD_DIR, RESULT_DIR):
     path.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="Jetson OCR", version="0.1.0")
+pipeline: OCRPipeline | None = None
+pipeline_lock = threading.Lock()
+startup_ready = False
+startup_error: str | None = None
+
+
+def get_pipeline() -> OCRPipeline:
+    global pipeline
+    with pipeline_lock:
+        if pipeline is None:
+            logger.info("Initializing OCR pipeline...")
+            pipeline = OCRPipeline()
+            logger.info("OCR pipeline initialized.")
+    return pipeline
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def warmup_pipeline(ocr: OCRPipeline) -> None:
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (640, 256), color=(255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    draw.text((40, 100), "OCR WARMUP 123", fill=(0, 0, 0))
+    image.save(WARMUP_IMAGE_PATH)
+    try:
+        ocr.predict_document(WARMUP_IMAGE_PATH)
+    finally:
+        if WARMUP_IMAGE_PATH.exists():
+            WARMUP_IMAGE_PATH.unlink(missing_ok=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    del app
+    global startup_ready, startup_error
+    startup_ready = False
+    startup_error = None
+
+    preload = _env_bool("OCR_PRELOAD_PIPELINE_ON_STARTUP", True)
+    warmup = _env_bool("OCR_WARMUP_ON_STARTUP", True)
+
+    try:
+        if preload:
+            ocr = get_pipeline()
+            if warmup:
+                logger.info("Running OCR warm-up inference during startup...")
+                warmup_pipeline(ocr)
+                logger.info("OCR warm-up completed.")
+        startup_ready = True
+        logger.info(
+            "OCR service startup complete (preload=%s, warmup=%s).",
+            preload,
+            warmup,
+        )
+    except Exception as exc:
+        startup_error = str(exc)
+        logger.exception("OCR service startup failed: %s", exc)
+        raise
+
+    yield
+
+
+app = FastAPI(title="Jetson OCR", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,19 +103,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-pipeline: OCRPipeline | None = None
-
-
-def get_pipeline() -> OCRPipeline:
-    global pipeline
-    if pipeline is None:
-        pipeline = OCRPipeline()
-    return pipeline
-
 
 @app.get("/healthz")
-def healthz() -> dict[str, str]:
-    return {"status": "ok"}
+def healthz() -> dict[str, str | bool | None]:
+    return {
+        "status": "ok" if startup_ready else "starting",
+        "startup_ready": startup_ready,
+        "startup_error": startup_error,
+    }
 
 
 @app.post("/v1/ocr", response_class=PlainTextResponse)

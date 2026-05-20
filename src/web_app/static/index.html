@@ -93,12 +93,12 @@
             <section class="ocr-panel" id="ocrPanel" hidden>
               <div class="ocr-toolbar">
                 <span class="ocr-label">OCR result</span>
+                <div class="ocr-actions">
+                  <span class="copy-status" id="copyOcrStatus" aria-live="polite"></span>
+                  <button class="copy-button" id="copyOcrButton" type="button">Copy</button>
+                </div>
               </div>
               <article class="ocr-result" id="ocrResult"></article>
-              <div class="ocr-footer">
-                <span class="copy-status" id="copyOcrStatus" aria-live="polite"></span>
-                <button class="copy-button" id="copyOcrButton" type="button">Copy</button>
-              </div>
             </section>
             <article class="answer-result" id="answerResult" hidden></article>
           </div>
@@ -144,6 +144,7 @@
           <div class="recent-header">
             <div class="recent-actions recent-actions-left">
               <button class="text-button" id="selectSessionsButton" type="button">Select</button>
+              <button class="text-button" id="selectAllSessionsButton" type="button" hidden>Select all</button>
               <span class="selection-summary" id="selectionSummary" hidden>0 selected</span>
               <button class="text-button danger-text" id="deleteSelectedButton" type="button" hidden>Delete selected</button>
               <button class="text-button" id="cancelSelectionButton" type="button" hidden>Cancel</button>

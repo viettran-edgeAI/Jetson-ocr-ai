@@ -14,12 +14,17 @@ services:
       LLM_SERVICE_URL: http://llm:8081
       WEB_REQUEST_TIMEOUT_SECONDS: 360
     depends_on:
-      - ocr
-      - llm
+      ocr:
+        condition: service_healthy
+      llm:
+        condition: service_healthy
 
   ocr:
     build: .
     runtime: nvidia
+    depends_on:
+      llm:
+        condition: service_healthy
     expose:
       - "8000"
     volumes:
@@ -38,6 +43,14 @@ services:
       OCR_TEXT_RECOGNITION_BATCH_SIZE: 4
       OCR_DATA_DIR: /app/data
       OCR_DEVICE: gpu:0
+      OCR_PRELOAD_PIPELINE_ON_STARTUP: "1"
+      OCR_WARMUP_ON_STARTUP: "1"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5).read()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 240s
+      retries: 5
 
   llm:
     image: jetson-ocr-llm:local
