@@ -689,8 +689,11 @@ h1 {
   color: var(--accent);
 }
 
-.recent-panel {
+.recent-shell {
   margin-top: 22px;
+}
+
+.recent-panel {
   padding: 22px 20px 24px;
   border-radius: var(--radius);
 }
@@ -706,7 +709,7 @@ h1 {
 }
 
 .recent-header {
-  justify-content: space-between;
+  justify-content: flex-end;
   padding: 0 14px 18px;
 }
 
@@ -718,6 +721,10 @@ h1 {
 
 .section-title {
   gap: 14px;
+}
+
+.recent-title {
+  padding: 0 14px 10px;
 }
 
 .section-title svg {
@@ -1070,6 +1077,10 @@ body.dark .chat-message.user .chat-bubble {
   .workspace,
   .recent-panel {
     padding: 16px;
+  }
+
+  .recent-title {
+    padding: 0 8px 10px;
   }
 
   .drop-zone {

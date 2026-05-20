@@ -47,6 +47,19 @@ Use Docker Compose for the three-container stack:
 docker compose up --build web-app
 ```
 
+Or start the full GPU runtime stack plus readiness checks (local APIs + cloudflared + public URL) in one command:
+
+```bash
+./start_app.sh
+```
+
+Optional flags:
+
+```bash
+./start_app.sh --build
+./start_app.sh --skip-public-check
+```
+
 The local origin is `http://localhost:8080`, but production validation should be done against `https://jetsonocrai.cc`. Public traffic should go to `web-app`; OCR and LLM services are addressed internally by Compose service name.
 
 ## Public Access

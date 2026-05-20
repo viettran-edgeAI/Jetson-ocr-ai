@@ -274,7 +274,8 @@ async function uploadFile(file) {
       state.pendingPreviewUrl = null;
     }
     renderSession(data);
-    setStatus("OCR complete.", "success");
+    const elapsedText = formatElapsedSeconds(data.ocr_elapsed_ms);
+    setStatus(elapsedText ? `OCR complete in ${elapsedText}.` : "OCR complete.", "success");
     await loadRecentSessions();
   } catch (error) {
     setStatus(error.message, "error");
@@ -937,4 +938,10 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function formatElapsedSeconds(elapsedMs) {
+  const ms = Number(elapsedMs);
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  return `${(ms / 1000).toFixed(1)}s`;
 }

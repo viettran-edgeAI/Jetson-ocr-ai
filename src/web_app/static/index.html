@@ -131,25 +131,27 @@
         </section>
       </section>
 
-      <section class="recent-panel" aria-label="Recent sessions">
-        <div class="recent-header">
-          <div class="section-title">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 12a8 8 0 1 0 2.3-5.7" />
-              <path d="M4 4v5h5" />
-              <path d="M12 7v5l3 2" />
-            </svg>
-            <h2>RECENT SESSIONS</h2>
-          </div>
-          <div class="recent-actions">
-            <span class="selection-summary" id="selectionSummary" hidden>0 selected</span>
-            <button class="text-button" id="selectSessionsButton" type="button">Select</button>
-            <button class="text-button danger-text" id="deleteSelectedButton" type="button" hidden>Delete selected</button>
-            <button class="text-button" id="cancelSelectionButton" type="button" hidden>Cancel</button>
-            <button class="text-button" id="viewAllButton" type="button">View all</button>
-          </div>
+      <section class="recent-shell" aria-label="Recent sessions">
+        <div class="section-title recent-title">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 12a8 8 0 1 0 2.3-5.7" />
+            <path d="M4 4v5h5" />
+            <path d="M12 7v5l3 2" />
+          </svg>
+          <h2>RECENT SESSIONS</h2>
         </div>
-        <div class="session-list" id="sessionList" aria-live="polite"></div>
+        <div class="recent-panel">
+          <div class="recent-header">
+            <div class="recent-actions">
+              <button class="text-button" id="selectSessionsButton" type="button">Select</button>
+              <span class="selection-summary" id="selectionSummary" hidden>0 selected</span>
+              <button class="text-button danger-text" id="deleteSelectedButton" type="button" hidden>Delete selected</button>
+              <button class="text-button" id="cancelSelectionButton" type="button" hidden>Cancel</button>
+              <button class="text-button" id="viewAllButton" type="button">View all</button>
+            </div>
+          </div>
+          <div class="session-list" id="sessionList" aria-live="polite"></div>
+        </div>
       </section>
     </main>
 
