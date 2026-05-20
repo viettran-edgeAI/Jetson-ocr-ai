@@ -13,15 +13,15 @@ This README is a concise project overview. The detailed browser UI and session d
 ## Current status
 
 - `ocr-service` works locally and in the containerized runtime.
-- `llm-service` works with Gemma GGUF and uses short one-shot defaults.
+- `llm-service` works with Gemma GGUF, thinking disabled, and an 8096-token context window.
 - The sample QA fixture in `data/ocr_markdown_run_v2/documents/question_0.md` is validated.
-- `web-app` now provides the browser session layer, upload flow, OCR preview, grounded prompt flow, persistent recent sessions, cache-busted public assets for `jetsonocrai.cc`, and bulk session selection/deletion.
+- `web-app` now provides the browser session layer, chat-first prompt flow, automatic OCR attachment into the current session context, OCR preview, persistent recent sessions, cache-busted public assets for `jetsonocrai.cc`, and bulk session selection/deletion.
 
 ## System At A Glance
 
 - `ocr-service`: image or PDF upload -> coordinate-arranged Markdown
-- `llm-service`: OCR Markdown + user request -> concise grounded answer
-- `web-app`: browser UI, session state, upload/preview/ask flow
+- `llm-service`: optional OCR Markdown + user request -> concise assistant answer
+- `web-app`: browser UI, session state, chat, upload/OCR attachment, preview, ask flow
 
 ## Module Structure
 
@@ -36,7 +36,8 @@ This README is a concise project overview. The detailed browser UI and session d
 - Use `jetsonocrai.cc` as the fixed public hostname for the browser application.
 - Use SQLite plus local files for the first session store.
 - Start with a single active session for the initial personal-use version.
-- Keep Gemma thinking disabled and the OCR context small for one-shot requests.
+- Keep Gemma thinking disabled and use an 8096-token context window.
+- Allow chat-only sessions; when a document is later attached and OCR succeeds, append its OCR Markdown to the current session context.
 - Keep OCR artifacts during development, but minimize them in operational mode.
 
 ## Running The Web App

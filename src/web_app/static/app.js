@@ -6,6 +6,7 @@ const state = {
   pendingPreviewUrl: null,
   currentMessages: [],
   currentMarkdown: "",
+  hasDocument: false,
   selectionMode: false,
   selectedSessionIds: new Set(),
   recentSessionIds: [],
@@ -83,7 +84,7 @@ function bindEvents() {
 
   on(els.dropZone, "click", (event) => {
     if (event.target.closest("button")) return;
-    if (!canStartNewUpload()) {
+    if (!canAttachDocument()) {
       setStatus("Click Start again or remove the current file to load a new one.");
       return;
     }
@@ -92,7 +93,7 @@ function bindEvents() {
   on(els.dropZone, "keydown", (event) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      if (!canStartNewUpload()) {
+      if (!canAttachDocument()) {
         setStatus("Click Start again or remove the current file to load a new one.");
         return;
       }
@@ -109,7 +110,7 @@ function bindEvents() {
   on(els.dropZone, "drop", (event) => {
     event.preventDefault();
     els.dropZone.classList.remove("is-dragging");
-    if (!canStartNewUpload()) {
+    if (!canAttachDocument()) {
       setStatus("Click Start again or remove the current file to load a new one.");
       return;
     }
@@ -123,7 +124,7 @@ function bindEvents() {
     );
     if (file) {
       event.preventDefault();
-      if (!canStartNewUpload()) {
+      if (!canAttachDocument()) {
         setStatus("Click Start again or remove the current file to load a new one.");
         return;
       }
@@ -167,7 +168,7 @@ function bindEvents() {
 
 function attachFile(file) {
   if (state.isBusy) return;
-  if (!canStartNewUpload()) {
+  if (!canAttachDocument()) {
     setStatus("Click Start again or remove the current file to load a new one.");
     return;
   }
@@ -177,22 +178,22 @@ function attachFile(file) {
     return;
   }
 
-  clearSelectedFile({ keepOutput: false });
+  const attachToCurrentSession = Boolean(state.activeSessionId && !state.hasDocument);
+  clearSelectedFile({
+    keepSession: attachToCurrentSession,
+    keepOutput: attachToCurrentSession,
+  });
   state.pendingFile = file;
   if (file.type.startsWith("image/")) {
     state.pendingPreviewUrl = URL.createObjectURL(file);
   }
-  state.activeSessionId = null;
-  state.currentMessages = [];
-  state.currentMarkdown = "";
   renderSelectedFile({
     filename: file.name,
     contentType: file.type,
     previewUrl: state.pendingPreviewUrl,
     removable: true,
   });
-  clearOutput();
-  setStatus("File ready. Click Convert to extract text.");
+  uploadFile(file);
 }
 
 function clearSelectedFile(options = {}) {
@@ -205,6 +206,7 @@ function clearSelectedFile(options = {}) {
     state.activeSessionId = null;
     state.currentMessages = [];
     state.currentMarkdown = "";
+    state.hasDocument = false;
   }
   if (!options.keepOutput) {
     clearOutput();
@@ -220,7 +222,7 @@ function clearSelectedFile(options = {}) {
     els.startAgainButton.hidden = true;
   }
   els.uploadButton.hidden = false;
-  els.dropTitle.textContent = "Drop, Upload or Paste Images";
+  els.dropTitle.textContent = "Attach a document anytime";
   setStatus("");
 }
 
@@ -239,7 +241,7 @@ function renderSelectedFile({ filename, contentType, previewUrl, removable }) {
   `;
   els.selectedFilePreview.hidden = false;
   els.uploadButton.hidden = true;
-  els.convertButton.hidden = !state.pendingFile;
+  els.convertButton.hidden = true;
   if (els.startAgainButton) {
     els.startAgainButton.hidden = false;
   }
@@ -259,16 +261,22 @@ async function convertSelectedFile() {
 }
 
 async function uploadFile(file) {
+  const attachToCurrentSession = Boolean(state.activeSessionId && !state.hasDocument);
   state.isBusy = true;
   setControlsBusy(true);
   setStatus(`Running OCR for ${file.name}...`);
-  clearOutput();
+  if (!attachToCurrentSession) {
+    clearOutput();
+  }
 
   const body = new FormData();
   body.append("file", file);
+  const uploadUrl = attachToCurrentSession
+    ? `/sessions/upload?session_id=${encodeURIComponent(state.activeSessionId)}`
+    : "/sessions/upload";
 
   try {
-    const response = await fetch("/sessions/upload", { method: "POST", body });
+    const response = await fetch(uploadUrl, { method: "POST", body });
     const data = await readJsonResponse(response);
     state.activeSessionId = data.id;
     state.pendingFile = null;
@@ -299,26 +307,23 @@ async function submitQuickAction(mode) {
 async function askQuestion(options = {}) {
   const prompt = (options.prompt || els.promptInput.value).trim();
   const mode = options.mode ?? state.activeMode;
-  if (!state.activeSessionId) {
-    setStatus("Convert a document before asking.", "error");
-    return;
-  }
   if (!prompt) {
     els.promptInput.focus();
     return;
   }
 
-  const optimisticMessages = [
-    ...state.currentMessages,
-    { role: "user", content: prompt },
-    { role: "assistant", content: "Thinking..." },
-  ];
   state.isBusy = true;
   setControlsBusy(true);
-  els.emptyOutput.hidden = true;
-  renderMessages(optimisticMessages);
 
   try {
+    await ensureChatSession();
+    const optimisticMessages = [
+      ...state.currentMessages,
+      { role: "user", content: prompt },
+      { role: "assistant", content: "Thinking..." },
+    ];
+    els.emptyOutput.hidden = true;
+    renderMessages(optimisticMessages);
     const response = await fetch(`/sessions/${state.activeSessionId}/ask`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -353,6 +358,16 @@ async function loadRecentSessions() {
   }
 }
 
+async function ensureChatSession() {
+  if (state.activeSessionId) return state.activeSessionId;
+
+  const response = await fetch("/sessions/chat", { method: "POST" });
+  const data = await readJsonResponse(response);
+  renderSession(data);
+  await loadRecentSessions();
+  return data.id;
+}
+
 async function restoreSession(id) {
   if (state.isBusy) return;
   try {
@@ -365,7 +380,8 @@ async function restoreSession(id) {
       state.pendingPreviewUrl = null;
     }
     renderSession(data);
-    setStatus(`Restored ${data.filename}.`, "success");
+    const label = data.has_document ? data.filename : "chat session";
+    setStatus(`Restored ${label}.`, "success");
   } catch (error) {
     setStatus(error.message, "error");
   }
@@ -438,14 +454,19 @@ function renderSession(session) {
   state.activeSessionId = session.id;
   state.currentMessages = session.messages || [];
   state.currentMarkdown = session.ocr_markdown || "";
-  renderSelectedFile({
-    filename: session.filename,
-    contentType: session.content_type,
-    previewUrl: session.thumbnail_url,
-    removable: true,
-  });
-  els.convertButton.hidden = true;
-  els.uploadButton.hidden = true;
+  state.hasDocument = Boolean(session.has_document);
+  if (state.hasDocument) {
+    renderSelectedFile({
+      filename: session.filename,
+      contentType: session.content_type,
+      previewUrl: session.thumbnail_url,
+      removable: true,
+    });
+    els.convertButton.hidden = true;
+    els.uploadButton.hidden = true;
+  } else {
+    renderChatOnlySessionShell();
+  }
 
   if (state.currentMarkdown) {
     showOcrContent(renderMarkdown(state.currentMarkdown, { preserveWhitespace: true }));
@@ -456,6 +477,17 @@ function renderSession(session) {
 
   renderMessages(state.currentMessages);
   updateOutputPlaceholderVisibility();
+}
+
+function renderChatOnlySessionShell() {
+  els.selectedFilePreview.hidden = true;
+  els.selectedFilePreview.innerHTML = "";
+  els.convertButton.hidden = true;
+  els.uploadButton.hidden = false;
+  if (els.startAgainButton) {
+    els.startAgainButton.hidden = !state.activeSessionId;
+  }
+  els.dropTitle.textContent = "Attach a document anytime";
 }
 
 function renderMessages(messages) {
@@ -491,7 +523,7 @@ function renderRecentSessions(sessions) {
   reconcileSelectedSessions(sessions);
   updateSelectionUi();
   if (!sessions.length) {
-    els.sessionList.innerHTML = `<div class="empty-list">Recent uploads will appear here.</div>`;
+    els.sessionList.innerHTML = `<div class="empty-list">Recent sessions will appear here.</div>`;
     return;
   }
 
@@ -499,6 +531,9 @@ function renderRecentSessions(sessions) {
     .map((session) => {
       const count = session.page_count || 1;
       const unit = session.file_type === "PDF" ? (count === 1 ? "page" : "pages") : "image";
+      const subtitle = session.has_document
+        ? `${escapeHtml(session.file_type)} &nbsp;•&nbsp; ${count} ${unit}`
+        : "Chat session";
       const thumbnail = session.thumbnail_url
         ? `<img src="${session.thumbnail_url}" alt="" loading="lazy" />`
         : iconFile;
@@ -519,7 +554,7 @@ function renderRecentSessions(sessions) {
               <span class="thumb">${thumbnail}</span>
               <span class="session-copy">
                 <span class="session-title">${escapeHtml(session.filename)}</span>
-                <span class="session-subtitle">${escapeHtml(session.file_type)} &nbsp;•&nbsp; ${count} ${unit}</span>
+                <span class="session-subtitle">${subtitle}</span>
               </span>
             </span>
           </button>
@@ -755,6 +790,7 @@ function inlineMarkdown(value) {
 }
 
 function fileTypeLabel(filename, contentType) {
+  if (contentType === "application/x-chat-session") return "CHAT";
   const suffix = String(filename || "").split(".").pop();
   if (suffix && suffix !== filename) return suffix.toUpperCase();
   if (contentType === "application/pdf") return "PDF";
@@ -767,11 +803,13 @@ function fileTypeLabel(filename, contentType) {
 function displayUserPrompt(value) {
   return String(value)
     .replace(/^Answer this question from the OCR text:\s*/i, "")
-    .replace(/^Solve this problem using the OCR text:\s*/i, "");
+    .replace(/^Solve this problem using the OCR text:\s*/i, "")
+    .replace(/^Answer this question:\s*/i, "")
+    .replace(/^Solve this problem:\s*/i, "");
 }
 
-function canStartNewUpload() {
-  return !state.pendingFile && !state.activeSessionId && !state.isBusy;
+function canAttachDocument() {
+  return !state.pendingFile && !state.hasDocument && !state.isBusy;
 }
 
 async function copyCurrentOcr() {

@@ -61,8 +61,9 @@ class SessionStore:
         session_id: str,
         filename: str,
         content_type: str,
-        original_path: Path,
+        original_path: Path | str,
         created_at: str,
+        status: str = "uploading",
     ) -> dict[str, Any]:
         with self.connect() as connection:
             connection.execute(
@@ -77,7 +78,7 @@ class SessionStore:
                     filename,
                     content_type,
                     str(original_path),
-                    "uploading",
+                    status,
                     created_at,
                     created_at,
                 ),

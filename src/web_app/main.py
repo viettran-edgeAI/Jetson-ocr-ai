@@ -40,6 +40,9 @@ ALLOWED_CONTENT_TYPES = {
     "image/jpeg",
     "application/pdf",
 }
+CHAT_CONTENT_TYPE = "application/x-chat-session"
+CHAT_SESSION_FILENAME = "Untitled chat"
+ASKABLE_STATUSES = {"chat_ready", "ocr_complete", "answered", "llm_failed", "ocr_failed"}
 
 for path in (UPLOAD_DIR, OCR_DIR):
     path.mkdir(parents=True, exist_ok=True)
@@ -92,6 +95,21 @@ async def recent_sessions() -> dict[str, list[dict[str, Any]]]:
     return {"sessions": [serialize_session_summary(row) for row in store.recent_sessions()]}
 
 
+@app.post("/sessions/chat")
+async def create_chat_session() -> dict[str, Any]:
+    session_id = uuid.uuid4().hex
+    now = utc_now()
+    session = store.create_session(
+        session_id=session_id,
+        filename=CHAT_SESSION_FILENAME,
+        content_type=CHAT_CONTENT_TYPE,
+        original_path="",
+        created_at=now,
+        status="chat_ready",
+    )
+    return serialize_session_detail(session)
+
+
 @app.get("/sessions/{session_id}")
 async def get_session(session_id: str) -> dict[str, Any]:
     session = store.get_session(session_id)
@@ -105,6 +123,8 @@ async def get_original(session_id: str) -> FileResponse:
     session = store.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found.")
+    if not has_session_document(session):
+        raise HTTPException(status_code=404, detail="No original document is attached.")
     original_path = Path(session["original_path"])
     if not original_path.exists():
         raise HTTPException(status_code=404, detail="Original file not found.")
@@ -166,29 +186,59 @@ async def bulk_delete_sessions(request_body: BulkDeleteSessionsRequest) -> dict[
 
 
 @app.post("/sessions/upload")
-async def upload_document(file: UploadFile = File(...)) -> dict[str, Any]:
+async def upload_document(
+    file: UploadFile = File(...),
+    session_id: str | None = None,
+) -> dict[str, Any]:
     filename = sanitize_filename(file.filename or "upload")
     content_type = normalize_content_type(file.content_type or "", filename)
     validate_upload(filename, content_type)
+    session_id = (session_id or "").strip() or None
+    existing_session: dict[str, Any] | None = None
+    if session_id:
+        existing_session = store.get_session(session_id)
+        if existing_session is None:
+            raise HTTPException(status_code=404, detail="Session not found.")
+        if has_session_document(existing_session):
+            raise HTTPException(
+                status_code=409,
+                detail="This session already has a document. Start again to attach another file.",
+            )
+        if existing_session["status"] in {"uploading", "ocr_running", "answering"}:
+            raise HTTPException(status_code=409, detail="Session is busy.")
 
     body = await file.read()
     if not body:
         raise HTTPException(status_code=400, detail="Upload is empty.")
 
-    session_id = uuid.uuid4().hex
+    session_id = session_id or uuid.uuid4().hex
     now = utc_now()
     suffix = Path(filename).suffix.lower()
     original_path = UPLOAD_DIR / f"{session_id}{suffix}"
     original_path.write_bytes(body)
 
-    store.create_session(
-        session_id=session_id,
-        filename=filename,
-        content_type=content_type,
-        original_path=original_path,
-        created_at=now,
-    )
-    store.update_session(session_id, utc_now(), status="ocr_running")
+    if existing_session is None:
+        store.create_session(
+            session_id=session_id,
+            filename=filename,
+            content_type=content_type,
+            original_path=original_path,
+            created_at=now,
+        )
+        store.update_session(session_id, utc_now(), status="ocr_running")
+    else:
+        store.update_session(
+            session_id,
+            now,
+            filename=filename,
+            content_type=content_type,
+            original_path=str(original_path),
+            status="ocr_running",
+            error=None,
+            ocr_markdown_path=None,
+            page_count=None,
+            ocr_elapsed_ms=None,
+        )
 
     started = time.perf_counter()
     try:
@@ -226,12 +276,12 @@ async def ask_session(session_id: str, ask: AskRequest) -> dict[str, Any]:
     session = store.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found.")
-    if session["status"] not in {"ocr_complete", "answered", "llm_failed"}:
-        raise HTTPException(status_code=409, detail="OCR must complete before asking.")
+    if session["status"] not in ASKABLE_STATUSES:
+        raise HTTPException(status_code=409, detail="Session is not ready for chat.")
 
     markdown = read_session_markdown(session)
     user_prompt = ask.prompt.strip()
-    prompt = build_prompt(user_prompt, ask.mode)
+    prompt = build_prompt(user_prompt, ask.mode, has_ocr=bool(markdown))
     now = utc_now()
     store.add_message(session_id=session_id, role="user", content=user_prompt, created_at=now)
     store.update_session(session_id, now, status="answering")
@@ -367,11 +417,13 @@ def serialize_session_detail(session: dict[str, Any]) -> dict[str, Any]:
 
 
 def serialize_session_summary(session: dict[str, Any]) -> dict[str, Any]:
+    has_document = has_session_document(session)
     return {
         "id": session["id"],
         "filename": session["filename"],
         "content_type": session["content_type"],
         "file_type": file_type_label(session["filename"], session["content_type"]),
+        "has_document": has_document,
         "status": session["status"],
         "error": session.get("error"),
         "page_count": session.get("page_count"),
@@ -380,7 +432,7 @@ def serialize_session_summary(session: dict[str, Any]) -> dict[str, Any]:
         "ocr_elapsed_ms": session.get("ocr_elapsed_ms"),
         "answer_elapsed_ms": session.get("answer_elapsed_ms"),
         "thumbnail_url": f"/sessions/{session['id']}/original"
-        if str(session["content_type"]).startswith("image/")
+        if has_document and str(session["content_type"]).startswith("image/")
         else None,
     }
 
@@ -388,25 +440,33 @@ def serialize_session_summary(session: dict[str, Any]) -> dict[str, Any]:
 def read_session_markdown(session: dict[str, Any]) -> str:
     path_value = session.get("ocr_markdown_path")
     if not path_value:
-        raise HTTPException(status_code=409, detail="OCR Markdown is not available.")
+        return ""
     path = Path(path_value)
     if not path.exists():
         raise HTTPException(status_code=404, detail="OCR Markdown file not found.")
     markdown = path.read_text(encoding="utf-8").strip()
     if not markdown:
-        raise HTTPException(status_code=409, detail="OCR Markdown is empty.")
+        return ""
     return markdown
 
 
-def build_prompt(prompt: str, mode: str | None) -> str:
+def build_prompt(prompt: str, mode: str | None, *, has_ocr: bool = True) -> str:
     cleaned = prompt.strip()
     if mode == "answer":
         if cleaned.lower() == "answer this question":
+            if not has_ocr:
+                return "Answer this question. If the question is missing, ask for it briefly."
             return "Answer the question contained in the OCR text."
+        if not has_ocr:
+            return f"Answer this question: {cleaned}"
         return f"Answer this question from the OCR text: {cleaned}"
     if mode == "solve":
         if cleaned.lower() == "solve this problem":
+            if not has_ocr:
+                return "Solve this problem. If the problem is missing, ask for it briefly."
             return "Solve the problem contained in the OCR text. Show the reasoning steps when useful."
+        if not has_ocr:
+            return f"Solve this problem: {cleaned}"
         return f"Solve this problem using the OCR text: {cleaned}"
     return cleaned
 
@@ -451,6 +511,8 @@ def count_pages(markdown: str, content_type: str) -> int:
 
 
 def file_type_label(filename: str, content_type: str) -> str:
+    if content_type == CHAT_CONTENT_TYPE:
+        return "CHAT"
     suffix = Path(filename).suffix.lower().lstrip(".")
     if suffix:
         return suffix.upper()
@@ -479,6 +541,11 @@ def delete_session_artifacts(session: dict[str, Any]) -> None:
     for path_value in (session.get("original_path"), session.get("ocr_markdown_path")):
         if path_value:
             Path(path_value).unlink(missing_ok=True)
+
+
+def has_session_document(session: dict[str, Any]) -> bool:
+    original_path = str(session.get("original_path") or "").strip()
+    return bool(original_path) and session.get("content_type") != CHAT_CONTENT_TYPE
 
 
 def main() -> None:

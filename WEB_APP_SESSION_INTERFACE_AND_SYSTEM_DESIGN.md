@@ -19,7 +19,7 @@ It should:
 - accept image and PDF uploads
 - call `ocr-service`
 - render OCR Markdown for preview
-- collect user questions or task prompts
+- collect user questions or task prompts before or after an upload
 - call `llm-service`
 - keep a small persistent session history
 
@@ -68,7 +68,8 @@ The initial version is a single-user, personal-use application. The design shoul
 - Include two quick actions:
   - `Answer a question`
   - `Solve this problem`
-- Keep the prompt flow short and one-shot by default.
+- Allow normal chat before any document is converted.
+- Once a document is attached and successfully OCRed, append the OCR Markdown to the current session context automatically.
 
 ### Recent sessions
 
@@ -133,11 +134,11 @@ Deployment identity:
 
 - Send uploads to `ocr-service` using the existing `POST /v1/ocr` contract.
 - Store the returned Markdown with the session.
-- Use OCR Markdown as the primary input for the LLM request.
+- Use OCR Markdown as the primary document context for the LLM request when a document is attached.
 
 ### LLM integration
 
-- Send the stored OCR Markdown plus the current user request to `llm-service`.
+- Send the current user request plus any stored OCR Markdown to `llm-service`.
 - Use `POST /v1/answer`.
 - Persist the returned answer and latency metadata.
 
@@ -192,11 +193,11 @@ The web app should:
 1. User opens the app.
 2. The web app shows recent sessions and an empty active workspace.
 3. User uploads a document or pastes an image.
-4. The web app stores the file and creates a session record.
+4. The web app stores the file and creates or updates the current session record.
 5. The web app sends the file to `ocr-service`.
 6. The OCR Markdown is saved and rendered in the output panel.
-7. User types a question or chooses a quick action.
-8. The web app sends OCR Markdown plus the prompt to `llm-service`.
+7. User types a question or chooses a quick action. This may also happen before any upload.
+8. The web app sends the prompt plus any available OCR Markdown to `llm-service`.
 9. The answer is saved, rendered, and attached to the session.
 10. The session remains available in the recent sessions list.
 
@@ -205,7 +206,7 @@ The web app should:
 ### Empty state
 
 - Show the upload prompt on the left.
-- Show a placeholder on the right such as `OCR result will appear here`.
+- Show a placeholder on the right inviting the user to chat or attach a document for OCR context.
 
 ### Uploading state
 
@@ -219,6 +220,7 @@ The web app should:
 - Keep page order and line order visible.
 - Preserve line breaks and approximate horizontal structure.
 - Keep the OCR card present while later chat messages render below it.
+- If chat messages already exist, keep them in the same session and make the OCR Markdown available to subsequent LLM calls.
 
 ### Answering state
 
@@ -243,6 +245,7 @@ The web app should stay thin and use the existing internal APIs.
 The web app itself can expose:
 
 - `GET /` for the main interface
+- `POST /sessions/chat` for creating a chat-only session
 - `POST /sessions/upload` for file intake
 - `POST /sessions/{id}/ask` for prompt submission
 - `GET /sessions/{id}` for restoring a session
@@ -259,8 +262,10 @@ The web app itself can expose:
 ## Acceptance Criteria
 
 - The UI matches the intended layout and visual balance from the mockup.
-- Uploading a PNG, JPG, JPEG, or PDF creates a session and triggers OCR.
+- Sending a prompt without a document creates a chat-only session and triggers an LLM answer.
+- Uploading a PNG, JPG, JPEG, or PDF creates a session or attaches to the active chat-only session and triggers OCR automatically.
 - OCR Markdown renders in the output panel.
+- Successfully OCRed Markdown is appended to the current session context for later chat turns.
 - OCR remains visible after the user asks a question.
 - The OCR result can be copied from the UI.
 - A new upload cannot replace the active session until the user explicitly starts again or removes the current file.

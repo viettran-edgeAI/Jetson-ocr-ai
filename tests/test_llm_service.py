@@ -8,10 +8,10 @@ from llm_service.main import AnswerRequest, ConversationMessage
 
 
 class LlmServiceConfigTests(unittest.TestCase):
-    def test_llama_command_disables_gemma_thinking_and_uses_short_context(self) -> None:
+    def test_llama_command_disables_gemma_thinking_and_uses_configured_context(self) -> None:
         command = llm_main.build_llama_command()
 
-        self.assertEqual(command[command.index("--ctx-size") + 1], "4096")
+        self.assertEqual(command[command.index("--ctx-size") + 1], "8096")
         self.assertIn("--reasoning", command)
         self.assertEqual(command[command.index("--reasoning") + 1], "off")
         self.assertIn("--reasoning-budget", command)
@@ -30,7 +30,14 @@ class LlmServiceConfigTests(unittest.TestCase):
         self.assertEqual(payload["temperature"], 0.2)
         self.assertEqual(payload["chat_template_kwargs"], {"enable_thinking": False})
         self.assertIn("Do not include hidden reasoning", payload["messages"][0]["content"])
-        self.assertIn("OCR Markdown for this file session", payload["messages"][0]["content"])
+        self.assertIn("OCR Markdown appended to this session", payload["messages"][0]["content"])
+
+    def test_payload_without_ocr_context_allows_general_chat(self) -> None:
+        payload = llm_main.build_chat_payload(AnswerRequest(user_request="Hello"))
+
+        self.assertIn("No OCR document context is attached", payload["messages"][0]["content"])
+        self.assertNotIn("```markdown", payload["messages"][0]["content"])
+        self.assertEqual(payload["messages"][1], {"role": "user", "content": "Hello"})
 
     def test_payload_includes_session_conversation_before_latest_request(self) -> None:
         payload = llm_main.build_chat_payload(

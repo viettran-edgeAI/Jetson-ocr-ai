@@ -14,6 +14,16 @@ from web_app import main as web_main
 from web_app.store import SessionStore
 
 
+class FakeUploadFile:
+    def __init__(self, filename: str, content_type: str, body: bytes) -> None:
+        self.filename = filename
+        self.content_type = content_type
+        self.body = body
+
+    async def read(self) -> bytes:
+        return self.body
+
+
 class WebAppSessionTests(unittest.TestCase):
     def test_upload_validation_accepts_only_supported_formats(self) -> None:
         web_main.validate_upload("scan.png", "image/png")
@@ -141,6 +151,22 @@ class WebAppSessionTests(unittest.TestCase):
         self.assertEqual(session["page_count"], 2)
         self.assertEqual(session["messages"][0]["content"], "Answer")
 
+    def test_create_chat_session_without_document(self) -> None:
+        original_store = web_main.store
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_store = SessionStore(Path(tmpdir) / "sessions.sqlite3")
+            web_main.store = temp_store
+            try:
+                response = asyncio.run(web_main.create_chat_session())
+            finally:
+                web_main.store = original_store
+
+        self.assertEqual(response["filename"], "Untitled chat")
+        self.assertEqual(response["status"], "chat_ready")
+        self.assertFalse(response["has_document"])
+        self.assertEqual(response["ocr_markdown"], "")
+        self.assertEqual(response["messages"], [])
+
     def test_message_history_for_llm_keeps_only_chat_messages(self) -> None:
         history = web_main.message_history_for_llm(
             [
@@ -230,6 +256,111 @@ class WebAppSessionTests(unittest.TestCase):
             ],
         )
         self.assertEqual(response["messages"][-1]["content"], "Because the OCR text says so.")
+
+    def test_ask_session_allows_chat_without_ocr_markdown(self) -> None:
+        original_store = web_main.store
+        original_post_answer = web_main.post_answer_request
+        original_to_thread = web_main.asyncio.to_thread
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_store = SessionStore(Path(tmpdir) / "sessions.sqlite3")
+            now = "2026-05-20T00:00:00+00:00"
+            temp_store.create_session(
+                session_id="session-1",
+                filename="Untitled chat",
+                content_type=web_main.CHAT_CONTENT_TYPE,
+                original_path="",
+                created_at=now,
+                status="chat_ready",
+            )
+            captured: dict[str, object] = {}
+
+            def fake_post_answer(
+                markdown: str,
+                prompt: str,
+                conversation_history: list[dict[str, str]] | None = None,
+            ) -> dict[str, object]:
+                captured["markdown"] = markdown
+                captured["prompt"] = prompt
+                captured["conversation_history"] = conversation_history
+                return {"answer": "General chat response.", "elapsed_ms": 1}
+
+            async def immediate_to_thread(function, *args, **kwargs):
+                return function(*args, **kwargs)
+
+            web_main.store = temp_store
+            web_main.post_answer_request = fake_post_answer
+            web_main.asyncio.to_thread = immediate_to_thread
+            try:
+                response = asyncio.run(
+                    web_main.ask_session("session-1", web_main.AskRequest(prompt="Hello"))
+                )
+            finally:
+                web_main.store = original_store
+                web_main.post_answer_request = original_post_answer
+                web_main.asyncio.to_thread = original_to_thread
+
+        self.assertEqual(captured["markdown"], "")
+        self.assertEqual(captured["prompt"], "Hello")
+        self.assertEqual(captured["conversation_history"], [])
+        self.assertEqual(response["status"], "answered")
+        self.assertEqual(response["messages"][-1]["content"], "General chat response.")
+
+    def test_upload_can_attach_document_to_existing_chat_session(self) -> None:
+        original_store = web_main.store
+        original_post_ocr = web_main.post_ocr_request
+        original_to_thread = web_main.asyncio.to_thread
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_store = SessionStore(Path(tmpdir) / "sessions.sqlite3")
+            now = "2026-05-20T00:00:00+00:00"
+            temp_store.create_session(
+                session_id="session-1",
+                filename="Untitled chat",
+                content_type=web_main.CHAT_CONTENT_TYPE,
+                original_path="",
+                created_at=now,
+                status="answered",
+            )
+            temp_store.add_message(
+                session_id="session-1",
+                role="user",
+                content="Hello before upload",
+                created_at=now,
+            )
+            captured: dict[str, object] = {}
+
+            def fake_post_ocr(filename: str, content_type: str, body: bytes) -> str:
+                captured["filename"] = filename
+                captured["content_type"] = content_type
+                captured["body"] = body
+                return "OCR text from attached document."
+
+            async def immediate_to_thread(function, *args, **kwargs):
+                return function(*args, **kwargs)
+
+            upload = FakeUploadFile(
+                filename="scan.png",
+                content_type="image/png",
+                body=b"png-bytes",
+            )
+
+            web_main.store = temp_store
+            web_main.post_ocr_request = fake_post_ocr
+            web_main.asyncio.to_thread = immediate_to_thread
+            try:
+                response = asyncio.run(web_main.upload_document(file=upload, session_id="session-1"))
+            finally:
+                web_main.store = original_store
+                web_main.post_ocr_request = original_post_ocr
+                web_main.asyncio.to_thread = original_to_thread
+
+        self.assertEqual(captured["filename"], "scan.png")
+        self.assertEqual(captured["content_type"], "image/png")
+        self.assertEqual(captured["body"], b"png-bytes")
+        self.assertEqual(response["id"], "session-1")
+        self.assertTrue(response["has_document"])
+        self.assertEqual(response["filename"], "scan.png")
+        self.assertEqual(response["ocr_markdown"], "OCR text from attached document.")
+        self.assertEqual(response["messages"][0]["content"], "Hello before upload")
 
     def test_session_store_renames_and_deletes_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

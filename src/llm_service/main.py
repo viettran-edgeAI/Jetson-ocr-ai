@@ -30,7 +30,7 @@ LLAMA_SERVER_URL = os.environ.get("LLAMA_SERVER_URL", f"http://{LLAMA_HOST}:{LLA
 LLM_HOST = os.environ.get("LLM_HOST", "0.0.0.0")
 LLM_PORT = int(os.environ.get("LLM_PORT", "8081"))
 
-DEFAULT_CTX_SIZE = int(os.environ.get("LLM_CTX_SIZE", "4096"))
+DEFAULT_CTX_SIZE = int(os.environ.get("LLM_CTX_SIZE", "8096"))
 DEFAULT_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "160"))
 DEFAULT_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
 DEFAULT_TOP_P = float(os.environ.get("LLM_TOP_P", "0.95"))
@@ -74,7 +74,7 @@ class ConversationMessage(BaseModel):
 
 
 class AnswerRequest(BaseModel):
-    ocr_markdown: str = Field(..., min_length=1)
+    ocr_markdown: str = Field(default="")
     user_request: str = Field(..., min_length=1)
     conversation_history: list[ConversationMessage] = Field(default_factory=list, max_length=40)
     max_tokens: int | None = Field(default=None, ge=1, le=2048)
@@ -231,30 +231,45 @@ def build_chat_payload(
     if prepared_ocr is None:
         prepared_ocr = prepare_ocr_markdown(request.ocr_markdown)
 
-    system_prompt = (
-        "You answer user requests using only the OCR Markdown provided. "
-        "If the OCR text does not contain enough evidence, say "
-        "\"insufficient evidence in OCR text\". Keep answers concise. "
-        "For multiple-choice questions, give the selected option and a brief reason. "
-        "Use the conversation history only to resolve follow-up references within "
-        "this same OCR session. Do not include hidden reasoning, chain-of-thought, "
-        "or <think> text."
-    )
+    has_ocr_context = bool(prepared_ocr["text"])
+    if has_ocr_context:
+        system_prompt = (
+            "You are a concise assistant. OCR Markdown from an attached document is "
+            "available in this session. Use it whenever the user asks about the "
+            "document or its contents. If the user asks about the attached document "
+            "and the OCR text does not contain enough evidence, say "
+            "\"insufficient evidence in OCR text\". For multiple-choice questions "
+            "from the OCR text, give the selected option and a brief reason. Use the "
+            "conversation history only to resolve follow-up references within this "
+            "same session. Do not include hidden reasoning, chain-of-thought, or "
+            "<think> text."
+        )
+    else:
+        system_prompt = (
+            "You are a concise assistant. No OCR document context is attached to "
+            "this session yet. Answer normal chat requests directly. If the user "
+            "asks about an attached document or OCR text, say that no OCR context is "
+            "available yet and ask them to attach a document. Use the conversation "
+            "history only to resolve follow-up references within this same session. "
+            "Do not include hidden reasoning, chain-of-thought, or <think> text."
+        )
     truncation_note = ""
     if prepared_ocr["truncated"]:
         truncation_note = (
-            "\n\nNote: OCR Markdown was truncated to fit the configured one-shot context cap."
+            "\n\nNote: OCR Markdown was truncated to fit the configured context cap."
         )
-    ocr_context = (
-        "OCR Markdown for this file session:\n"
-        "```markdown\n"
-        f"{prepared_ocr['text']}\n"
-        "```"
-        f"{truncation_note}"
-    )
-    messages: list[dict[str, str]] = [
-        {"role": "system", "content": f"{system_prompt}\n\n{ocr_context}"}
-    ]
+    system_content = system_prompt
+    if has_ocr_context:
+        ocr_context = (
+            "OCR Markdown appended to this session:\n"
+            "```markdown\n"
+            f"{prepared_ocr['text']}\n"
+            "```"
+            f"{truncation_note}"
+        )
+        system_content = f"{system_prompt}\n\n{ocr_context}"
+
+    messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
     messages.extend(prepare_conversation_history(request.conversation_history))
     messages.append({"role": "user", "content": request.user_request.strip()})
 
