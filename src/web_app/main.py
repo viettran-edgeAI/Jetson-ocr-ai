@@ -238,7 +238,12 @@ async def ask_session(session_id: str, ask: AskRequest) -> dict[str, Any]:
 
     started = time.perf_counter()
     try:
-        answer = await asyncio.to_thread(post_answer_request, markdown, prompt)
+        answer = await asyncio.to_thread(
+            post_answer_request,
+            markdown,
+            prompt,
+            message_history_for_llm(session.get("messages", [])),
+        )
     except ServiceError as exc:
         store.update_session(session_id, utc_now(), status="llm_failed", error=str(exc))
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -297,8 +302,15 @@ def post_ocr_request(filename: str, content_type: str, body: bytes) -> str:
         raise ServiceError(f"OCR service is unavailable: {exc.reason}") from exc
 
 
-def post_answer_request(markdown: str, prompt: str) -> dict[str, Any]:
-    payload = json.dumps({"ocr_markdown": markdown, "user_request": prompt}).encode("utf-8")
+def post_answer_request(
+    markdown: str,
+    prompt: str,
+    conversation_history: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    request_body: dict[str, Any] = {"ocr_markdown": markdown, "user_request": prompt}
+    if conversation_history:
+        request_body["conversation_history"] = conversation_history
+    payload = json.dumps(request_body).encode("utf-8")
     req = request.Request(
         f"{LLM_SERVICE_URL.rstrip('/')}/v1/answer",
         data=payload,
@@ -313,6 +325,17 @@ def post_answer_request(markdown: str, prompt: str) -> dict[str, Any]:
         raise ServiceError(f"LLM service failed: {detail}") from exc
     except error.URLError as exc:
         raise ServiceError(f"LLM service is unavailable: {exc.reason}") from exc
+
+
+def message_history_for_llm(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+    history: list[dict[str, str]] = []
+    for message in messages:
+        role = str(message.get("role") or "").strip()
+        content = str(message.get("content") or "").strip()
+        if role not in {"user", "assistant"} or not content:
+            continue
+        history.append({"role": role, "content": content})
+    return history
 
 
 def build_multipart_file_body(

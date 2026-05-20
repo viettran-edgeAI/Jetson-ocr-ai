@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -38,6 +38,7 @@ DEFAULT_TOP_K = int(os.environ.get("LLM_TOP_K", "40"))
 DEFAULT_PARALLEL = int(os.environ.get("LLM_PARALLEL", "1"))
 DEFAULT_GPU_LAYERS = os.environ.get("LLM_GPU_LAYERS", "auto")
 DEFAULT_MAX_OCR_CHARS = int(os.environ.get("LLM_MAX_OCR_CHARS", "12000"))
+DEFAULT_MAX_HISTORY_CHARS = int(os.environ.get("LLM_MAX_HISTORY_CHARS", "4000"))
 LLM_DEVICE = os.environ.get("LLM_DEVICE", "").strip()
 LLM_FLASH_ATTN = os.environ.get("LLM_FLASH_ATTN", "").strip()
 LLM_FIT = os.environ.get("LLM_FIT", "").strip()
@@ -67,9 +68,15 @@ EXTERNAL_LLAMA_SERVER = os.environ.get("LLM_EXTERNAL_LLAMA_SERVER", "0").lower()
 }
 
 
+class ConversationMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(..., min_length=1, max_length=8000)
+
+
 class AnswerRequest(BaseModel):
     ocr_markdown: str = Field(..., min_length=1)
     user_request: str = Field(..., min_length=1)
+    conversation_history: list[ConversationMessage] = Field(default_factory=list, max_length=40)
     max_tokens: int | None = Field(default=None, ge=1, le=2048)
 
 
@@ -229,27 +236,31 @@ def build_chat_payload(
         "If the OCR text does not contain enough evidence, say "
         "\"insufficient evidence in OCR text\". Keep answers concise. "
         "For multiple-choice questions, give the selected option and a brief reason. "
-        "Do not include hidden reasoning, chain-of-thought, or <think> text."
+        "Use the conversation history only to resolve follow-up references within "
+        "this same OCR session. Do not include hidden reasoning, chain-of-thought, "
+        "or <think> text."
     )
     truncation_note = ""
     if prepared_ocr["truncated"]:
         truncation_note = (
             "\n\nNote: OCR Markdown was truncated to fit the configured one-shot context cap."
         )
-    user_prompt = (
-        "OCR Markdown:\n"
+    ocr_context = (
+        "OCR Markdown for this file session:\n"
         "```markdown\n"
         f"{prepared_ocr['text']}\n"
         "```"
-        f"{truncation_note}\n\n"
-        f"User request: {request.user_request.strip()}"
+        f"{truncation_note}"
     )
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": f"{system_prompt}\n\n{ocr_context}"}
+    ]
+    messages.extend(prepare_conversation_history(request.conversation_history))
+    messages.append({"role": "user", "content": request.user_request.strip()})
+
     payload: dict[str, Any] = {
         "model": MODEL_ALIAS,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
+        "messages": messages,
         "max_tokens": request.max_tokens or DEFAULT_MAX_TOKENS,
         "temperature": DEFAULT_TEMPERATURE,
         "top_p": DEFAULT_TOP_P,
@@ -259,6 +270,36 @@ def build_chat_payload(
     if DISABLE_THINKING:
         payload["chat_template_kwargs"] = {"enable_thinking": False}
     return payload
+
+
+def prepare_conversation_history(
+    conversation_history: list[ConversationMessage],
+) -> list[dict[str, str]]:
+    selected: list[dict[str, str]] = []
+    used_chars = 0
+
+    for message in reversed(conversation_history):
+        content = message.content.strip()
+        if not content:
+            continue
+
+        remaining_chars = DEFAULT_MAX_HISTORY_CHARS - used_chars
+        if remaining_chars <= 0:
+            break
+
+        if len(content) > remaining_chars:
+            suffix = "\n[Conversation history truncated]"
+            if remaining_chars > len(suffix):
+                content_budget = remaining_chars - len(suffix)
+                content = f"{content[:content_budget].rstrip()}{suffix}"
+            else:
+                content = content[:remaining_chars].rstrip()
+
+        selected.append({"role": message.role, "content": content})
+        used_chars += len(content)
+
+    selected.reverse()
+    return selected
 
 
 def prepare_ocr_markdown(ocr_markdown: str) -> dict[str, Any]:

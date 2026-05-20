@@ -141,6 +141,96 @@ class WebAppSessionTests(unittest.TestCase):
         self.assertEqual(session["page_count"], 2)
         self.assertEqual(session["messages"][0]["content"], "Answer")
 
+    def test_message_history_for_llm_keeps_only_chat_messages(self) -> None:
+        history = web_main.message_history_for_llm(
+            [
+                {"role": "system", "content": "ignore"},
+                {"role": "user", "content": " First question "},
+                {"role": "assistant", "content": "First answer"},
+                {"role": "assistant", "content": ""},
+            ]
+        )
+
+        self.assertEqual(
+            history,
+            [
+                {"role": "user", "content": "First question"},
+                {"role": "assistant", "content": "First answer"},
+            ],
+        )
+
+    def test_ask_session_sends_prior_messages_to_llm(self) -> None:
+        original_store = web_main.store
+        original_post_answer = web_main.post_answer_request
+        original_to_thread = web_main.asyncio.to_thread
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_store = SessionStore(Path(tmpdir) / "sessions.sqlite3")
+            now = "2026-05-20T00:00:00+00:00"
+            markdown_path = Path(tmpdir) / "scan.md"
+            markdown_path.write_text("Invoice total is $42.", encoding="utf-8")
+            temp_store.create_session(
+                session_id="session-1",
+                filename="scan.png",
+                content_type="image/png",
+                original_path=Path(tmpdir) / "scan.png",
+                created_at=now,
+            )
+            temp_store.update_session(
+                "session-1",
+                now,
+                status="answered",
+                ocr_markdown_path=str(markdown_path),
+            )
+            temp_store.add_message(
+                session_id="session-1",
+                role="user",
+                content="What is the total?",
+                created_at=now,
+            )
+            temp_store.add_message(
+                session_id="session-1",
+                role="assistant",
+                content="The total is $42.",
+                created_at=now,
+            )
+            captured: dict[str, object] = {}
+
+            def fake_post_answer(
+                markdown: str,
+                prompt: str,
+                conversation_history: list[dict[str, str]] | None = None,
+            ) -> dict[str, object]:
+                captured["markdown"] = markdown
+                captured["prompt"] = prompt
+                captured["conversation_history"] = conversation_history
+                return {"answer": "Because the OCR text says so.", "elapsed_ms": 1}
+
+            async def immediate_to_thread(function, *args, **kwargs):
+                return function(*args, **kwargs)
+
+            web_main.store = temp_store
+            web_main.post_answer_request = fake_post_answer
+            web_main.asyncio.to_thread = immediate_to_thread
+            try:
+                response = asyncio.run(
+                    web_main.ask_session("session-1", web_main.AskRequest(prompt="Why?"))
+                )
+            finally:
+                web_main.store = original_store
+                web_main.post_answer_request = original_post_answer
+                web_main.asyncio.to_thread = original_to_thread
+
+        self.assertEqual(captured["markdown"], "Invoice total is $42.")
+        self.assertEqual(captured["prompt"], "Why?")
+        self.assertEqual(
+            captured["conversation_history"],
+            [
+                {"role": "user", "content": "What is the total?"},
+                {"role": "assistant", "content": "The total is $42."},
+            ],
+        )
+        self.assertEqual(response["messages"][-1]["content"], "Because the OCR text says so.")
+
     def test_session_store_renames_and_deletes_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SessionStore(Path(tmpdir) / "sessions.sqlite3")

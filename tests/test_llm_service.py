@@ -4,7 +4,7 @@ import json
 import unittest
 
 import llm_service.main as llm_main
-from llm_service.main import AnswerRequest
+from llm_service.main import AnswerRequest, ConversationMessage
 
 
 class LlmServiceConfigTests(unittest.TestCase):
@@ -30,6 +30,41 @@ class LlmServiceConfigTests(unittest.TestCase):
         self.assertEqual(payload["temperature"], 0.2)
         self.assertEqual(payload["chat_template_kwargs"], {"enable_thinking": False})
         self.assertIn("Do not include hidden reasoning", payload["messages"][0]["content"])
+        self.assertIn("OCR Markdown for this file session", payload["messages"][0]["content"])
+
+    def test_payload_includes_session_conversation_before_latest_request(self) -> None:
+        payload = llm_main.build_chat_payload(
+            AnswerRequest(
+                ocr_markdown="Invoice total is $42.",
+                user_request="Why?",
+                conversation_history=[
+                    ConversationMessage(role="user", content="What is the total?"),
+                    ConversationMessage(role="assistant", content="The total is $42."),
+                ],
+            )
+        )
+
+        self.assertEqual(payload["messages"][1], {"role": "user", "content": "What is the total?"})
+        self.assertEqual(payload["messages"][2], {"role": "assistant", "content": "The total is $42."})
+        self.assertEqual(payload["messages"][3], {"role": "user", "content": "Why?"})
+
+    def test_conversation_history_is_bounded(self) -> None:
+        original_budget = llm_main.DEFAULT_MAX_HISTORY_CHARS
+        try:
+            llm_main.DEFAULT_MAX_HISTORY_CHARS = 40
+            history = llm_main.prepare_conversation_history(
+                [
+                    ConversationMessage(role="user", content="old question"),
+                    ConversationMessage(role="assistant", content="x" * 100),
+                ]
+            )
+        finally:
+            llm_main.DEFAULT_MAX_HISTORY_CHARS = original_budget
+
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["role"], "assistant")
+        self.assertLessEqual(len(history[0]["content"]), 40)
+        self.assertIn("Conversation history truncated", history[0]["content"])
 
     def test_ocr_markdown_is_truncated_to_context_budget(self) -> None:
         original_budget = llm_main.DEFAULT_MAX_OCR_CHARS
