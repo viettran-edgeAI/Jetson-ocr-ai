@@ -125,7 +125,28 @@ h1 {
 .utility-actions {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 14px;
+}
+
+.site-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ghost-button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: #30446f;
+  background: rgba(255, 255, 255, 0.7);
+  font-weight: 700;
+}
+
+.ghost-button:hover {
+  border-color: #b9c2eb;
+  background: #f8faff;
 }
 
 .icon-button {
@@ -431,10 +452,12 @@ h1 {
   text-transform: uppercase;
 }
 
-.ocr-actions {
+.ocr-footer {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
+  padding: 0 20px 18px;
 }
 
 .copy-status {
@@ -687,6 +710,12 @@ h1 {
   padding: 0 14px 18px;
 }
 
+.recent-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
 .section-title {
   gap: 14px;
 }
@@ -701,6 +730,16 @@ h1 {
   border: 0;
   color: #352ce3;
   background: transparent;
+  font-weight: 800;
+}
+
+.danger-text {
+  color: #b42318;
+}
+
+.selection-summary {
+  color: #53699d;
+  font-size: 13px;
   font-weight: 800;
 }
 
@@ -719,6 +758,15 @@ h1 {
   background: rgba(255, 255, 255, 0.75);
   text-align: left;
   transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.session-row.is-selecting {
+  padding-left: 52px;
+}
+
+.session-row.is-selected {
+  border-color: #4d37df;
+  background: rgba(238, 240, 255, 0.92);
 }
 
 .session-row.is-menu-open {
@@ -740,6 +788,38 @@ h1 {
   color: inherit;
   background: transparent;
   text-align: left;
+}
+
+.session-selector {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+
+.session-selector input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+}
+
+.session-selector span {
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid #b7c2e4;
+  border-radius: 5px;
+  background: #fff;
+}
+
+.session-selector input:checked + span {
+  border-color: #4d37df;
+  background: linear-gradient(180deg, #654df1, #4d33dc);
+  box-shadow: inset 0 0 0 4px #fff;
 }
 
 .session-main {
@@ -890,7 +970,8 @@ body.dark .selected-thumb,
 body.dark .chat-bubble,
 body.dark .session-menu,
 body.dark .empty-list,
-body.dark .ocr-toolbar {
+body.dark .ocr-toolbar,
+body.dark .ghost-button {
   background: rgba(22, 32, 54, 0.82);
 }
 
@@ -906,13 +987,20 @@ body.dark .session-menu button,
 body.dark .chat-bubble,
 body.dark .ocr-result,
 body.dark .copy-button,
-body.dark .start-again-button {
+body.dark .start-again-button,
+body.dark .ghost-button,
+body.dark .selection-summary {
   color: var(--text);
 }
 
 body.dark .copy-button,
-body.dark .start-again-button {
+body.dark .start-again-button,
+body.dark .ghost-button {
   background: rgba(22, 32, 54, 0.92);
+}
+
+body.dark .session-row.is-selected {
+  background: rgba(45, 62, 112, 0.72);
 }
 
 body.dark .ocr-result pre,
@@ -969,6 +1057,14 @@ body.dark .chat-message.user .chat-bubble {
 
   .utility-actions {
     gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .site-actions,
+  .recent-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .workspace,

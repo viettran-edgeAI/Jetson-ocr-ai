@@ -6,6 +6,8 @@ const state = {
   pendingPreviewUrl: null,
   currentMessages: [],
   currentMarkdown: "",
+  selectionMode: false,
+  selectedSessionIds: new Set(),
 };
 
 let copyFeedbackTimer = null;
@@ -31,6 +33,15 @@ const els = {
   sendButton: document.querySelector("#sendButton"),
   sessionList: document.querySelector("#sessionList"),
   themeToggle: document.querySelector("#themeToggle"),
+  pricingButton: document.querySelector("#pricingButton"),
+  loginButton: document.querySelector("#loginButton"),
+  signupButton: document.querySelector("#signupButton"),
+  logoutButton: document.querySelector("#logoutButton"),
+  helpButton: document.querySelector("#helpButton"),
+  selectSessionsButton: document.querySelector("#selectSessionsButton"),
+  deleteSelectedButton: document.querySelector("#deleteSelectedButton"),
+  cancelSelectionButton: document.querySelector("#cancelSelectionButton"),
+  selectionSummary: document.querySelector("#selectionSummary"),
   viewAllButton: document.querySelector("#viewAllButton"),
 };
 
@@ -139,6 +150,14 @@ function bindEvents() {
   on(els.themeToggle, "click", () => {
     document.body.classList.toggle("dark");
   });
+  on(els.pricingButton, "click", () => setStatus("Pricing is not configured in this single-user build."));
+  on(els.loginButton, "click", () => setStatus("Login is not configured in this single-user build."));
+  on(els.signupButton, "click", () => setStatus("Sign up is not configured in this single-user build."));
+  on(els.logoutButton, "click", () => setStatus("Logout is not configured in this single-user build."));
+  on(els.helpButton, "click", () => setStatus("Help center is not configured in this single-user build."));
+  on(els.selectSessionsButton, "click", enterSelectionMode);
+  on(els.cancelSelectionButton, "click", exitSelectionMode);
+  on(els.deleteSelectedButton, "click", deleteSelectedSessions);
 
   on(els.viewAllButton, "click", loadRecentSessions);
 }
@@ -384,6 +403,33 @@ async function deleteSession(id) {
   }
 }
 
+async function deleteSelectedSessions() {
+  const ids = [...state.selectedSessionIds];
+  if (!ids.length) return;
+  if (!window.confirm(`Delete ${ids.length} selected session${ids.length === 1 ? "" : "s"}?`)) return;
+  try {
+    state.isBusy = true;
+    setControlsBusy(true);
+    const response = await fetch("/sessions/bulk-delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_ids: ids }),
+    });
+    const data = await readJsonResponse(response);
+    if (ids.includes(state.activeSessionId)) {
+      clearSelectedFile();
+    }
+    exitSelectionMode({ silent: true });
+    await loadRecentSessions();
+    setStatus(`Deleted ${data.deleted_count} session${data.deleted_count === 1 ? "" : "s"}.`, "success");
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    state.isBusy = false;
+    setControlsBusy(false);
+  }
+}
+
 function renderSession(session) {
   state.activeSessionId = session.id;
   state.currentMessages = session.messages || [];
@@ -437,6 +483,8 @@ function renderMessages(messages) {
 }
 
 function renderRecentSessions(sessions) {
+  reconcileSelectedSessions(sessions);
+  updateSelectionUi();
   if (!sessions.length) {
     els.sessionList.innerHTML = `<div class="empty-list">Recent uploads will appear here.</div>`;
     return;
@@ -449,8 +497,18 @@ function renderRecentSessions(sessions) {
       const thumbnail = session.thumbnail_url
         ? `<img src="${session.thumbnail_url}" alt="" loading="lazy" />`
         : iconFile;
+      const isSelected = state.selectedSessionIds.has(session.id);
+      const selector = state.selectionMode
+        ? `
+          <label class="session-selector">
+            <input type="checkbox" data-select-session="${session.id}" ${isSelected ? "checked" : ""} />
+            <span></span>
+          </label>
+        `
+        : "";
       return `
-        <div class="session-row" data-session-id="${session.id}">
+        <div class="session-row${isSelected ? " is-selected" : ""}${state.selectionMode ? " is-selecting" : ""}" data-session-id="${session.id}">
+          ${selector}
           <button class="session-open" type="button" data-open-session="${session.id}">
             <span class="session-main">
               <span class="thumb">${thumbnail}</span>
@@ -478,10 +536,28 @@ function renderRecentSessions(sessions) {
     .join("");
 
   els.sessionList.querySelectorAll("[data-open-session]").forEach((button) => {
-    button.addEventListener("click", () => restoreSession(button.dataset.openSession));
+    button.addEventListener("click", () => {
+      if (state.selectionMode) {
+        toggleSessionSelection(button.dataset.openSession);
+        return;
+      }
+      restoreSession(button.dataset.openSession);
+    });
+  });
+  els.sessionList.querySelectorAll("[data-select-session]").forEach((input) => {
+    input.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+    input.addEventListener("change", () => {
+      toggleSessionSelection(input.dataset.selectSession, input.checked);
+    });
   });
   els.sessionList.querySelectorAll("[data-menu-session]").forEach((button) => {
     button.addEventListener("click", (event) => {
+      if (state.selectionMode) {
+        event.preventDefault();
+        return;
+      }
       event.stopPropagation();
       const menu = button.parentElement.querySelector(".session-menu");
       const willOpen = menu.hidden;
@@ -540,6 +616,15 @@ function setControlsBusy(isBusy) {
   els.fileInput.disabled = isBusy;
   if (els.copyOcrButton) {
     els.copyOcrButton.disabled = isBusy;
+  }
+  if (els.selectSessionsButton) {
+    els.selectSessionsButton.disabled = isBusy;
+  }
+  if (els.deleteSelectedButton) {
+    els.deleteSelectedButton.disabled = isBusy || !state.selectedSessionIds.size;
+  }
+  if (els.cancelSelectionButton) {
+    els.cancelSelectionButton.disabled = isBusy;
   }
 }
 
@@ -726,6 +811,74 @@ function clearCopyFeedback() {
   if (els.copyOcrStatus) {
     els.copyOcrStatus.textContent = "";
   }
+}
+
+function enterSelectionMode() {
+  state.selectionMode = true;
+  state.selectedSessionIds.clear();
+  closeSessionMenus();
+  updateSelectionUi();
+  loadRecentSessions();
+}
+
+function exitSelectionMode(options = {}) {
+  state.selectionMode = false;
+  state.selectedSessionIds.clear();
+  updateSelectionUi();
+  if (!options.silent) {
+    loadRecentSessions();
+  }
+}
+
+function toggleSessionSelection(id, forceChecked) {
+  if (!id) return;
+  const shouldSelect = forceChecked ?? !state.selectedSessionIds.has(id);
+  if (shouldSelect) {
+    state.selectedSessionIds.add(id);
+  } else {
+    state.selectedSessionIds.delete(id);
+  }
+  updateSelectionUi();
+  renderSessionSelectionState();
+}
+
+function renderSessionSelectionState() {
+  els.sessionList.querySelectorAll(".session-row").forEach((row) => {
+    const id = row.dataset.sessionId;
+    const isSelected = state.selectedSessionIds.has(id);
+    row.classList.toggle("is-selected", isSelected);
+    row.classList.toggle("is-selecting", state.selectionMode);
+  });
+  els.sessionList.querySelectorAll("[data-select-session]").forEach((input) => {
+    input.checked = state.selectedSessionIds.has(input.dataset.selectSession);
+  });
+}
+
+function updateSelectionUi() {
+  if (els.selectSessionsButton) {
+    els.selectSessionsButton.hidden = state.selectionMode;
+  }
+  if (els.deleteSelectedButton) {
+    els.deleteSelectedButton.hidden = !state.selectionMode;
+    els.deleteSelectedButton.disabled = state.isBusy || !state.selectedSessionIds.size;
+  }
+  if (els.cancelSelectionButton) {
+    els.cancelSelectionButton.hidden = !state.selectionMode;
+  }
+  if (els.selectionSummary) {
+    const count = state.selectedSessionIds.size;
+    els.selectionSummary.hidden = !state.selectionMode;
+    els.selectionSummary.textContent = `${count} selected`;
+  }
+}
+
+function reconcileSelectedSessions(sessions) {
+  const validIds = new Set((sessions || []).map((session) => session.id));
+  state.selectedSessionIds.forEach((id) => {
+    if (!validIds.has(id)) {
+      state.selectedSessionIds.delete(id);
+    }
+  });
 }
 
 function showOcrContent(html) {

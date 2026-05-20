@@ -69,6 +69,10 @@ class RenameSessionRequest(BaseModel):
     filename: str = Field(..., min_length=1, max_length=160)
 
 
+class BulkDeleteSessionsRequest(BaseModel):
+    session_ids: list[str] = Field(..., min_length=1, max_length=200)
+
+
 @app.get("/")
 async def index() -> HTMLResponse:
     asset_version = static_asset_version()
@@ -132,10 +136,33 @@ async def delete_session(session_id: str) -> dict[str, str]:
     session = store.delete_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found.")
-    for path_value in (session.get("original_path"), session.get("ocr_markdown_path")):
-        if path_value:
-            Path(path_value).unlink(missing_ok=True)
+    delete_session_artifacts(session)
     return {"status": "deleted"}
+
+
+@app.post("/sessions/bulk-delete")
+async def bulk_delete_sessions(request_body: BulkDeleteSessionsRequest) -> dict[str, Any]:
+    seen: set[str] = set()
+    deleted_count = 0
+    missing_ids: list[str] = []
+
+    for session_id in request_body.session_ids:
+        session_id = session_id.strip()
+        if not session_id or session_id in seen:
+            continue
+        seen.add(session_id)
+        session = store.delete_session(session_id)
+        if session is None:
+            missing_ids.append(session_id)
+            continue
+        delete_session_artifacts(session)
+        deleted_count += 1
+
+    return {
+        "status": "deleted",
+        "deleted_count": deleted_count,
+        "missing_ids": missing_ids,
+    }
 
 
 @app.post("/sessions/upload")
@@ -423,6 +450,12 @@ def static_asset_version() -> str:
     )
     newest_mtime = max(int(path.stat().st_mtime) for path in paths)
     return str(newest_mtime)
+
+
+def delete_session_artifacts(session: dict[str, Any]) -> None:
+    for path_value in (session.get("original_path"), session.get("ocr_markdown_path")):
+        if path_value:
+            Path(path_value).unlink(missing_ok=True)
 
 
 def main() -> None:

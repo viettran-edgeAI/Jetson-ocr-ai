@@ -23,12 +23,18 @@
           </div>
         </div>
         <div class="utility-actions">
+          <nav class="site-actions" aria-label="Site actions">
+            <button class="ghost-button" id="pricingButton" type="button">Pricing</button>
+            <button class="ghost-button" id="loginButton" type="button">Log in</button>
+            <button class="ghost-button" id="signupButton" type="button">Sign up</button>
+            <button class="ghost-button" id="logoutButton" type="button">Log out</button>
+          </nav>
           <button class="icon-button" id="themeToggle" type="button" aria-label="Toggle theme" title="Toggle theme">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M20.1 15.4A7.4 7.4 0 0 1 8.6 3.9 8.2 8.2 0 1 0 20.1 15.4z" />
             </svg>
           </button>
-          <button class="icon-button" type="button" aria-label="Help" title="Help">
+          <button class="icon-button" id="helpButton" type="button" aria-label="Help" title="Help">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="12" cy="12" r="8.2" />
               <path d="M9.7 9.6a2.5 2.5 0 0 1 4.7 1.3c0 1.8-2.4 2-2.4 3.7" />
@@ -87,12 +93,12 @@
             <section class="ocr-panel" id="ocrPanel" hidden>
               <div class="ocr-toolbar">
                 <span class="ocr-label">OCR result</span>
-                <div class="ocr-actions">
-                  <span class="copy-status" id="copyOcrStatus" aria-live="polite"></span>
-                  <button class="copy-button" id="copyOcrButton" type="button">Copy text</button>
-                </div>
               </div>
               <article class="ocr-result" id="ocrResult"></article>
+              <div class="ocr-footer">
+                <span class="copy-status" id="copyOcrStatus" aria-live="polite"></span>
+                <button class="copy-button" id="copyOcrButton" type="button">Copy</button>
+              </div>
             </section>
             <article class="answer-result" id="answerResult" hidden></article>
           </div>
@@ -135,7 +141,13 @@
             </svg>
             <h2>RECENT SESSIONS</h2>
           </div>
-          <button class="text-button" id="viewAllButton" type="button">View all</button>
+          <div class="recent-actions">
+            <span class="selection-summary" id="selectionSummary" hidden>0 selected</span>
+            <button class="text-button" id="selectSessionsButton" type="button">Select</button>
+            <button class="text-button danger-text" id="deleteSelectedButton" type="button" hidden>Delete selected</button>
+            <button class="text-button" id="cancelSelectionButton" type="button" hidden>Cancel</button>
+            <button class="text-button" id="viewAllButton" type="button">View all</button>
+          </div>
         </div>
         <div class="session-list" id="sessionList" aria-live="polite"></div>
       </section>

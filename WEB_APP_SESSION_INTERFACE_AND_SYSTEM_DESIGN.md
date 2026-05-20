@@ -39,7 +39,7 @@ The initial version is a single-user, personal-use application. The design shoul
 
 - Show the product name: `OCR AI Assistant`.
 - Show a short subtitle such as `Extract text and get intelligent answers`.
-- Keep a minimal utility area on the right for theme/help actions.
+- Keep a utility area on the right for theme/help plus common site-shell actions such as login, logout, and related account links.
 
 ### Input panel
 
@@ -56,7 +56,7 @@ The initial version is a single-user, personal-use application. The design shoul
 - Show an empty state before OCR completes.
 - Render OCR Markdown directly once text is available.
 - Keep the OCR result visible after an assistant answer is added.
-- Provide a copy action for the OCR result.
+- Provide a copy action for the OCR result, positioned at the bottom-right of the OCR result box.
 - Keep the output card visually distinct from the input card.
 - Provide an obvious place for the LLM answer after the prompt is submitted.
 - Keep source references visible when possible.
@@ -75,6 +75,7 @@ The initial version is a single-user, personal-use application. The design shoul
 - Show recent uploads and runs in a list.
 - Include filename, file type, page or image count, and relative time.
 - Allow reopening a prior session.
+- Allow a Gmail-style selection mode so multiple old sessions can be selected and deleted together.
 - Make the list informative enough that the user can resume work without re-uploading.
 
 ## Visual System
@@ -263,6 +264,7 @@ The web app itself can expose:
 - OCR remains visible after the user asks a question.
 - The OCR result can be copied from the UI.
 - A new upload cannot replace the active session until the user explicitly starts again or removes the current file.
+- The recent sessions list supports multi-select deletion.
 - A prompt submission triggers an LLM answer.
 - Recent sessions persist across reloads.
 - The design works on desktop and mobile.

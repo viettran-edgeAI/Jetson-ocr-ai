@@ -15,7 +15,7 @@ This README is a concise project overview. The detailed browser UI and session d
 - `ocr-service` works locally and in the containerized runtime.
 - `llm-service` works with Gemma GGUF and uses short one-shot defaults.
 - The sample QA fixture in `data/ocr_markdown_run_v2/documents/question_0.md` is validated.
-- `web-app` now provides the browser session layer, upload flow, OCR preview, grounded prompt flow, persistent recent sessions, and cache-busted public assets for `jetsonocrai.cc`.
+- `web-app` now provides the browser session layer, upload flow, OCR preview, grounded prompt flow, persistent recent sessions, cache-busted public assets for `jetsonocrai.cc`, and bulk session selection/deletion.
 
 ## System At A Glance
 

@@ -67,6 +67,46 @@ class WebAppSessionTests(unittest.TestCase):
         self.assertEqual(response.media_type, "image/png")
         self.assertIn('inline; filename="scan.png"', response.headers["content-disposition"])
 
+    def test_bulk_delete_sessions_removes_multiple_entries(self) -> None:
+        original_store = web_main.store
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_store = SessionStore(Path(tmpdir) / "sessions.sqlite3")
+            now = "2026-05-20T00:00:00+00:00"
+            for session_id in ("session-1", "session-2"):
+                image_path = Path(tmpdir) / f"{session_id}.png"
+                image_path.write_bytes(b"png-bytes")
+                markdown_path = Path(tmpdir) / f"{session_id}.md"
+                markdown_path.write_text("content", encoding="utf-8")
+                temp_store.create_session(
+                    session_id=session_id,
+                    filename=f"{session_id}.png",
+                    content_type="image/png",
+                    original_path=image_path,
+                    created_at=now,
+                )
+                temp_store.update_session(
+                    session_id,
+                    now,
+                    status="ocr_complete",
+                    ocr_markdown_path=str(markdown_path),
+                )
+
+            web_main.store = temp_store
+            try:
+                response = asyncio.run(
+                    web_main.bulk_delete_sessions(
+                        web_main.BulkDeleteSessionsRequest(session_ids=["session-1", "session-2", "session-2"])
+                    )
+                )
+            finally:
+                web_main.store = original_store
+
+            remaining = [temp_store.get_session("session-1"), temp_store.get_session("session-2")]
+
+        self.assertEqual(response["deleted_count"], 2)
+        self.assertEqual(response["missing_ids"], [])
+        self.assertEqual(remaining, [None, None])
+
     def test_session_store_persists_messages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SessionStore(Path(tmpdir) / "sessions.sqlite3")
