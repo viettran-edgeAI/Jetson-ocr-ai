@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OCR AI Assistant</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar" aria-label="Application header">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M7 3.5h6.7L18 7.8v12.7H7z" />
+              <path d="M13.6 3.8v4.4h4.1" />
+              <path d="M9.4 12.2h5.2M9.4 15.4h5.2" />
+            </svg>
+          </div>
+          <div>
+            <h1>OCR AI Assistant</h1>
+            <p>Extract text and get intelligent answers</p>
+          </div>
+        </div>
+        <div class="utility-actions">
+          <button class="icon-button" id="themeToggle" type="button" aria-label="Toggle theme" title="Toggle theme">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20.1 15.4A7.4 7.4 0 0 1 8.6 3.9 8.2 8.2 0 1 0 20.1 15.4z" />
+            </svg>
+          </button>
+          <button class="icon-button" type="button" aria-label="Help" title="Help">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="8.2" />
+              <path d="M9.7 9.6a2.5 2.5 0 0 1 4.7 1.3c0 1.8-2.4 2-2.4 3.7" />
+              <path d="M12 17.5h.01" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="workspace" aria-label="OCR workspace">
+        <section class="panel input-panel" aria-label="Input">
+          <div class="drop-zone" id="dropZone" tabindex="0" role="button" aria-label="Upload or paste a document">
+            <input id="fileInput" type="file" accept=".png,.jpg,.jpeg,.pdf,image/png,image/jpeg,application/pdf" hidden />
+            <div class="drop-content">
+              <svg class="upload-cloud" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M16.9 18H18a4 4 0 0 0 .4-8 6.5 6.5 0 0 0-12.2-2.1A4.8 4.8 0 0 0 6 17.5h1.1" />
+                <path d="M12 12v8" />
+                <path d="m8.7 15.2 3.3-3.3 3.3 3.3" />
+              </svg>
+              <p class="drop-title" id="dropTitle">Drop, Upload or Paste Images</p>
+              <p class="drop-subtitle">Supports: PNG, JPG, JPEG, PDF</p>
+              <div class="selected-file" id="selectedFilePreview" hidden></div>
+              <button class="primary-upload" id="uploadButton" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3v12" />
+                  <path d="m8 7 4-4 4 4" />
+                  <path d="M5 15v4h14v-4" />
+                </svg>
+                Upload files
+              </button>
+              <button class="convert-button" id="convertButton" type="button" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M5 12h13" />
+                  <path d="m14 8 4 4-4 4" />
+                </svg>
+                Convert
+              </button>
+              <button class="start-again-button" id="startAgainButton" type="button" hidden>
+                Start again
+              </button>
+              <p class="state-text" id="uploadState" aria-live="polite"></p>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel output-panel" aria-label="Output">
+          <div class="output-card" id="outputCard">
+            <div class="empty-output" id="emptyOutput">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 3.5h7l4 4v13H7z" />
+                <path d="M14 3.7v4.1h4" />
+                <path d="M10 12h5M10 15.5h5" />
+              </svg>
+              <p>OCR result will appear here</p>
+            </div>
+            <section class="ocr-panel" id="ocrPanel" hidden>
+              <div class="ocr-toolbar">
+                <span class="ocr-label">OCR result</span>
+                <div class="ocr-actions">
+                  <span class="copy-status" id="copyOcrStatus" aria-live="polite"></span>
+                  <button class="copy-button" id="copyOcrButton" type="button">Copy text</button>
+                </div>
+              </div>
+              <article class="ocr-result" id="ocrResult"></article>
+            </section>
+            <article class="answer-result" id="answerResult" hidden></article>
+          </div>
+
+          <form class="prompt-form" id="promptForm">
+            <input id="promptInput" type="text" autocomplete="off" placeholder="Ask anything about the content..." />
+            <button class="send-button" id="sendButton" type="submit" aria-label="Send prompt" title="Send prompt">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 4.5 20 12 4 19.5v-6l9-1.5-9-1.5z" />
+              </svg>
+            </button>
+          </form>
+
+          <div class="quick-actions">
+            <button type="button" data-mode="answer">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 5h14v10H8l-3 3z" />
+                <path d="M9 9h.01M12 9h.01M15 9h.01" />
+              </svg>
+              Answer this question
+            </button>
+            <button type="button" data-mode="solve">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="6" y="4" width="12" height="16" rx="1.6" />
+                <path d="M9 8h6M9 12h.01M12 12h.01M15 12h.01M9 16h.01M12 16h.01M15 16h.01" />
+              </svg>
+              Solve this problem
+            </button>
+          </div>
+        </section>
+      </section>
+
+      <section class="recent-panel" aria-label="Recent sessions">
+        <div class="recent-header">
+          <div class="section-title">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 12a8 8 0 1 0 2.3-5.7" />
+              <path d="M4 4v5h5" />
+              <path d="M12 7v5l3 2" />
+            </svg>
+            <h2>RECENT SESSIONS</h2>
+          </div>
+          <button class="text-button" id="viewAllButton" type="button">View all</button>
+        </div>
+        <div class="session-list" id="sessionList" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

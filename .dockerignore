@@ -1,0 +1,11 @@
+.git
+.agents
+.codex
+.venv
+.venv-1
+.vscode
+data
+models
+ocr_img_test
+__pycache__
+*.pyc
