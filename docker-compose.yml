@@ -13,6 +13,9 @@ services:
       OCR_SERVICE_URL: http://ocr:8000
       LLM_SERVICE_URL: http://llm:8081
       WEB_REQUEST_TIMEOUT_SECONDS: 360
+      WEB_APP_SECRET_KEY: ${WEB_APP_SECRET_KEY:-dev-insecure-change-me}
+      WEB_APP_OWNER_EMAIL: ${WEB_APP_OWNER_EMAIL:-}
+      WEB_APP_COOKIE_SECURE: ${WEB_APP_COOKIE_SECURE:-0}
     depends_on:
       ocr:
         condition: service_healthy

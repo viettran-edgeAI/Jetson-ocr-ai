@@ -23,6 +23,7 @@
           </div>
         </div>
         <div class="utility-actions">
+          <span class="account-status" id="accountStatus">Guest</span>
           <nav class="site-actions" aria-label="Site actions">
             <button class="ghost-button" id="pricingButton" type="button">Pricing</button>
             <button class="ghost-button" id="loginButton" type="button">Log in</button>
@@ -110,6 +111,7 @@
                 <path d="M4 4.5 20 12 4 19.5v-6l9-1.5-9-1.5z" />
               </svg>
             </button>
+            <p class="prompt-limit" id="promptLimitStatus" aria-live="polite"></p>
           </form>
 
           <div class="quick-actions">
@@ -157,6 +159,31 @@
         </div>
       </section>
     </main>
+
+    <div class="auth-modal" id="authModal" hidden>
+      <div class="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+        <div class="auth-header">
+          <h2 id="authTitle">Log in</h2>
+          <button class="icon-button" id="authCloseButton" type="button" aria-label="Close" title="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </button>
+        </div>
+        <form class="auth-form" id="authForm">
+          <label>
+            <span>Email</span>
+            <input id="authEmail" type="email" autocomplete="email" required />
+          </label>
+          <label>
+            <span>Password</span>
+            <input id="authPassword" type="password" autocomplete="current-password" minlength="8" required />
+          </label>
+          <button class="primary-upload" id="authSubmitButton" type="submit">Log in</button>
+          <p class="state-text" id="authStatus" aria-live="polite"></p>
+        </form>
+      </div>
+    </div>
 
     <script src="/static/app.js" defer></script>
   </body>

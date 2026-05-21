@@ -21,9 +21,9 @@ It should:
 - render OCR Markdown for preview
 - collect user questions or task prompts before or after an upload
 - call `llm-service`
-- keep a small persistent session history
+- keep a small persistent session history scoped to the current registered user or guest identity
 
-The initial version is a single-user, personal-use application. The design should not block later multi-user expansion, but that is not part of the first implementation.
+The current web app supports registered users, signed guest identities, user-scoped session history, and hourly OCR-upload limits by tier.
 
 ## Interface Requirements
 
@@ -73,7 +73,7 @@ The initial version is a single-user, personal-use application. The design shoul
 
 ### Recent sessions
 
-- Show recent uploads and runs in a list.
+- Show recent uploads and runs for the current user or guest in a list.
 - Include filename, file type, page or image count, and relative time.
 - Allow reopening a prior session.
 - Allow a Gmail-style selection mode so multiple old sessions can be selected and deleted together.
@@ -155,12 +155,16 @@ Suggested file layout:
 
 Suggested database tables:
 
+- `users`
+- `auth_sessions`
 - `sessions`
 - `messages`
+- `rate_limit_events`
 
 Suggested session fields:
 
 - session id
+- owner type and owner id
 - filename
 - content type
 - artifact paths
@@ -256,7 +260,8 @@ The web app itself can expose:
 - Use server-rendered HTML or a similarly simple approach for the first version.
 - Keep browser state and server state aligned through session ids.
 - Avoid overbuilding chat features before the upload-to-answer path works.
-- Keep the first pass optimized for one active user and one active session.
+- Keep session APIs scoped to the authenticated user or signed guest identity.
+- Apply hourly OCR-upload limits: guest 10, free 50, pro 2000, owner unlimited.
 - Keep the visual hierarchy close to the mockup, especially the upload and output panels.
 
 ## Acceptance Criteria

@@ -16,6 +16,7 @@ This README is a concise project overview. The detailed browser UI and session d
 - `llm-service` works with Gemma GGUF, thinking disabled, and an 8096-token context window.
 - The sample QA fixture in `data/ocr_markdown_run_v2/documents/question_0.md` is validated.
 - `web-app` now provides the browser session layer, chat-first prompt flow, automatic OCR attachment into the current session context, OCR preview, persistent recent sessions, cache-busted public assets for `jetsonocrai.cc`, and bulk session selection/deletion.
+- `web-app` supports local email/password accounts, guest identities, user-scoped recent sessions, and hourly OCR-upload rate limits by tier.
 
 ## System At A Glance
 
@@ -35,7 +36,8 @@ This README is a concise project overview. The detailed browser UI and session d
 - Keep OCR and LLM services internal to the container network.
 - Use `jetsonocrai.cc` as the fixed public hostname for the browser application.
 - Use SQLite plus local files for the first session store.
-- Start with a single active session for the initial personal-use version.
+- Scope sessions to either a registered user or signed guest identity.
+- Apply hourly OCR-upload limits: guest 10, free 50, pro 2000, owner unlimited.
 - Keep Gemma thinking disabled and use an 8096-token context window.
 - Allow chat-only sessions; when a document is later attached and OCR succeeds, append its OCR Markdown to the current session context.
 - Keep OCR artifacts during development, but minimize them in operational mode.
@@ -60,6 +62,7 @@ Optional flags:
 ./start_app.sh --build
 ./start_app.sh --no-build
 ./start_app.sh --skip-public-check
+./start_app.sh --local_test
 ```
 
 Safely shut the stack down:
@@ -74,6 +77,17 @@ Optional shutdown flags:
 ./stop_app.sh --remove-volumes
 ./stop_app.sh --stop-cloudflared
 ```
+
+Multi-user web-app settings:
+
+```bash
+# .env (project root)
+WEB_APP_SECRET_KEY=replace-with-at-least-32-random-characters
+WEB_APP_OWNER_EMAIL=your-email@example.com
+WEB_APP_COOKIE_SECURE=1
+```
+
+`start_app.sh` loads these values from `.env` automatically. The `--local_test` flag forces `WEB_APP_COOKIE_SECURE=0`; without it, startup forces `WEB_APP_COOKIE_SECURE=1`. `WEB_APP_OWNER_EMAIL` marks the no-limit owner account. Existing single-user sessions are assigned to that owner when the web app starts with this value set.
 
 The local origin is `http://localhost:8080`, but production validation should be done against `https://jetsonocrai.cc`. Public traffic should go to `web-app`; OCR and LLM services are addressed internally by Compose service name.
 

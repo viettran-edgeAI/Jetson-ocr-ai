@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 os.environ.setdefault("WEB_APP_DATA_DIR", tempfile.mkdtemp(prefix="ocr-web-test-"))
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 
 from web_app import main as web_main
+from web_app.auth import Identity
 from web_app.store import SessionStore
 
 
@@ -166,6 +169,93 @@ class WebAppSessionTests(unittest.TestCase):
         self.assertFalse(response["has_document"])
         self.assertEqual(response["ocr_markdown"], "")
         self.assertEqual(response["messages"], [])
+
+    def test_signup_activates_owner_placeholder(self) -> None:
+        original_store = web_main.store
+        original_owner_email = web_main.OWNER_EMAIL
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_store = SessionStore(Path(tmpdir) / "sessions.sqlite3")
+            web_main.store = temp_store
+            web_main.OWNER_EMAIL = "owner@example.com"
+            temp_store.ensure_owner_placeholder(
+                user_id="owner-user",
+                email="owner@example.com",
+                created_at="2026-05-20T00:00:00+00:00",
+            )
+            try:
+                response = asyncio.run(
+                    web_main.signup(
+                        web_main.AuthRequest(email="owner@example.com", password="password123"),
+                        Response(),
+                    )
+                )
+            finally:
+                web_main.store = original_store
+                web_main.OWNER_EMAIL = original_owner_email
+
+        self.assertEqual(response["user"]["tier"], "owner")
+        self.assertEqual(response["rate_limit"]["unlimited"], True)
+
+    def test_session_routes_are_scoped_to_identity(self) -> None:
+        original_store = web_main.store
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_store = SessionStore(Path(tmpdir) / "sessions.sqlite3")
+            now = "2026-05-20T00:00:00+00:00"
+            owner_a = Identity(owner_type="user", owner_id="user-a", tier="free", is_authenticated=True)
+            owner_b = Identity(owner_type="user", owner_id="user-b", tier="free", is_authenticated=True)
+            temp_store.create_session(
+                session_id="session-a",
+                owner_type=owner_a.owner_type,
+                owner_id=owner_a.owner_id,
+                filename="a.png",
+                content_type="image/png",
+                original_path=Path(tmpdir) / "a.png",
+                created_at=now,
+            )
+            temp_store.create_session(
+                session_id="session-b",
+                owner_type=owner_b.owner_type,
+                owner_id=owner_b.owner_id,
+                filename="b.png",
+                content_type="image/png",
+                original_path=Path(tmpdir) / "b.png",
+                created_at=now,
+            )
+            web_main.store = temp_store
+            try:
+                recent = asyncio.run(web_main.recent_sessions(identity=owner_a))
+                with self.assertRaises(HTTPException):
+                    asyncio.run(web_main.get_session("session-b", identity=owner_a))
+            finally:
+                web_main.store = original_store
+
+        self.assertEqual([session["id"] for session in recent["sessions"]], ["session-a"])
+
+    def test_ocr_upload_rate_limit_blocks_guest_after_hourly_limit(self) -> None:
+        original_store = web_main.store
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_store = SessionStore(Path(tmpdir) / "sessions.sqlite3")
+            identity = Identity(owner_type="guest", owner_id="guest-a", tier="guest")
+            now = datetime.now(timezone.utc)
+            for index in range(web_main.OCR_UPLOAD_LIMITS["guest"]):
+                temp_store.add_rate_limit_event(
+                    owner_type=identity.owner_type,
+                    owner_id=identity.owner_id,
+                    action=web_main.OCR_UPLOAD_ACTION,
+                    created_at=(now - timedelta(minutes=index)).isoformat(),
+                )
+            web_main.store = temp_store
+            try:
+                response = asyncio.run(
+                    web_main.upload_document(
+                        file=FakeUploadFile("scan.png", "image/png", b"png-bytes"),
+                        identity=identity,
+                    )
+                )
+            finally:
+                web_main.store = original_store
+
+        self.assertEqual(response.status_code, 429)
 
     def test_message_history_for_llm_keeps_only_chat_messages(self) -> None:
         history = web_main.message_history_for_llm(
@@ -384,6 +474,44 @@ class WebAppSessionTests(unittest.TestCase):
         self.assertEqual(renamed["filename"], "renamed.pdf")
         self.assertIsNotNone(deleted)
         self.assertIsNone(after_delete)
+
+    def test_session_store_migrates_legacy_sessions_table(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "sessions.sqlite3"
+            with sqlite3.connect(db_path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE sessions (
+                        id TEXT PRIMARY KEY,
+                        filename TEXT NOT NULL,
+                        content_type TEXT NOT NULL,
+                        original_path TEXT NOT NULL,
+                        ocr_markdown_path TEXT,
+                        status TEXT NOT NULL,
+                        error TEXT,
+                        page_count INTEGER,
+                        ocr_elapsed_ms INTEGER,
+                        answer_elapsed_ms INTEGER,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
+                    """
+                )
+
+            store = SessionStore(db_path)
+            now = "2026-05-21T00:00:00+00:00"
+            store.create_session(
+                session_id="legacy-1",
+                owner_type="user",
+                owner_id="owner-1",
+                filename="legacy.pdf",
+                content_type="application/pdf",
+                original_path=Path(tmpdir) / "legacy.pdf",
+                created_at=now,
+            )
+            session = store.get_session("legacy-1", owner_type="user", owner_id="owner-1")
+
+        self.assertIsNotNone(session)
 
 
 if __name__ == "__main__":

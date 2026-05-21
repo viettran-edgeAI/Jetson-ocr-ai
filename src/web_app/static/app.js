@@ -10,6 +10,8 @@ const state = {
   selectionMode: false,
   selectedSessionIds: new Set(),
   recentSessionIds: [],
+  account: null,
+  authMode: "login",
 };
 
 let copyFeedbackTimer = null;
@@ -32,9 +34,11 @@ const els = {
   answerResult: document.querySelector("#answerResult"),
   promptForm: document.querySelector("#promptForm"),
   promptInput: document.querySelector("#promptInput"),
+  promptLimitStatus: document.querySelector("#promptLimitStatus"),
   sendButton: document.querySelector("#sendButton"),
   sessionList: document.querySelector("#sessionList"),
   themeToggle: document.querySelector("#themeToggle"),
+  accountStatus: document.querySelector("#accountStatus"),
   pricingButton: document.querySelector("#pricingButton"),
   loginButton: document.querySelector("#loginButton"),
   signupButton: document.querySelector("#signupButton"),
@@ -46,6 +50,14 @@ const els = {
   cancelSelectionButton: document.querySelector("#cancelSelectionButton"),
   selectionSummary: document.querySelector("#selectionSummary"),
   viewAllButton: document.querySelector("#viewAllButton"),
+  authModal: document.querySelector("#authModal"),
+  authForm: document.querySelector("#authForm"),
+  authTitle: document.querySelector("#authTitle"),
+  authEmail: document.querySelector("#authEmail"),
+  authPassword: document.querySelector("#authPassword"),
+  authSubmitButton: document.querySelector("#authSubmitButton"),
+  authCloseButton: document.querySelector("#authCloseButton"),
+  authStatus: document.querySelector("#authStatus"),
 };
 
 const iconFile = `
@@ -62,8 +74,9 @@ const iconMore = `
   </svg>
 `;
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   bindEvents();
+  await loadAccountState();
   loadRecentSessions();
 });
 
@@ -153,17 +166,22 @@ function bindEvents() {
   on(els.themeToggle, "click", () => {
     document.body.classList.toggle("dark");
   });
-  on(els.pricingButton, "click", () => setStatus("Pricing is not configured in this single-user build."));
-  on(els.loginButton, "click", () => setStatus("Login is not configured in this single-user build."));
-  on(els.signupButton, "click", () => setStatus("Sign up is not configured in this single-user build."));
-  on(els.logoutButton, "click", () => setStatus("Logout is not configured in this single-user build."));
-  on(els.helpButton, "click", () => setStatus("Help center is not configured in this single-user build."));
+  on(els.pricingButton, "click", () => setStatus("Pricing is not configured."));
+  on(els.loginButton, "click", () => openAuthModal("login"));
+  on(els.signupButton, "click", () => openAuthModal("signup"));
+  on(els.logoutButton, "click", logout);
+  on(els.helpButton, "click", () => setStatus("Help center is not configured."));
   on(els.selectSessionsButton, "click", enterSelectionMode);
   on(els.selectAllSessionsButton, "click", toggleSelectAllSessions);
   on(els.cancelSelectionButton, "click", exitSelectionMode);
   on(els.deleteSelectedButton, "click", deleteSelectedSessions);
 
   on(els.viewAllButton, "click", loadRecentSessions);
+  on(els.authCloseButton, "click", closeAuthModal);
+  on(els.authModal, "click", (event) => {
+    if (event.target === els.authModal) closeAuthModal();
+  });
+  on(els.authForm, "submit", submitAuthForm);
 }
 
 function attachFile(file) {
@@ -286,7 +304,11 @@ async function uploadFile(file) {
     }
     renderSession(data);
     const elapsedText = formatElapsedSeconds(data.ocr_elapsed_ms);
-    setStatus(elapsedText ? `OCR complete in ${elapsedText}.` : "OCR complete.", "success");
+    const completeText = elapsedText ? `OCR complete in ${elapsedText}.` : "OCR complete.";
+    setStatus(completeText, "success");
+    if (data.rate_limit) {
+      renderRateLimit(data.rate_limit);
+    }
     await loadRecentSessions();
   } catch (error) {
     setStatus(error.message, "error");
@@ -358,6 +380,18 @@ async function loadRecentSessions() {
   }
 }
 
+async function loadAccountState() {
+  try {
+    const response = await fetch("/auth/me");
+    const data = await readJsonResponse(response);
+    state.account = data.identity;
+    renderAccountState(data.identity);
+    renderRateLimit(data.rate_limit);
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+}
+
 async function ensureChatSession() {
   if (state.activeSessionId) return state.activeSessionId;
 
@@ -366,6 +400,63 @@ async function ensureChatSession() {
   renderSession(data);
   await loadRecentSessions();
   return data.id;
+}
+
+function openAuthModal(mode) {
+  state.authMode = mode;
+  els.authTitle.textContent = mode === "signup" ? "Sign up" : "Log in";
+  els.authSubmitButton.textContent = mode === "signup" ? "Sign up" : "Log in";
+  els.authStatus.textContent = "";
+  els.authStatus.className = "state-text";
+  els.authEmail.value = "";
+  els.authPassword.value = "";
+  els.authModal.hidden = false;
+  els.authEmail.focus();
+}
+
+function closeAuthModal() {
+  els.authModal.hidden = true;
+}
+
+async function submitAuthForm(event) {
+  event.preventDefault();
+  const email = els.authEmail.value.trim();
+  const password = els.authPassword.value;
+  if (!email || !password) return;
+
+  els.authSubmitButton.disabled = true;
+  els.authStatus.textContent = state.authMode === "signup" ? "Creating account..." : "Logging in...";
+  els.authStatus.className = "state-text";
+  try {
+    const response = await fetch(`/auth/${state.authMode}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    await readJsonResponse(response);
+    closeAuthModal();
+    clearSelectedFile();
+    await loadAccountState();
+    await loadRecentSessions();
+    setStatus(state.authMode === "signup" ? "Account created." : "Logged in.", "success");
+  } catch (error) {
+    els.authStatus.textContent = error.message;
+    els.authStatus.className = "state-text error";
+  } finally {
+    els.authSubmitButton.disabled = false;
+  }
+}
+
+async function logout() {
+  try {
+    await fetch("/auth/logout", { method: "POST" });
+    clearSelectedFile();
+    await loadAccountState();
+    await loadRecentSessions();
+    setStatus("Logged out.", "success");
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
 }
 
 async function restoreSession(id) {
@@ -479,6 +570,40 @@ function renderSession(session) {
   updateOutputPlaceholderVisibility();
 }
 
+function renderAccountState(identity) {
+  const isAuthenticated = Boolean(identity?.authenticated);
+  const tier = identity?.tier || "guest";
+  if (els.accountStatus) {
+    els.accountStatus.textContent = isAuthenticated
+      ? `${identity.email} · ${tier.toUpperCase()}`
+      : "Guest";
+  }
+  if (els.loginButton) els.loginButton.hidden = isAuthenticated;
+  if (els.signupButton) els.signupButton.hidden = isAuthenticated;
+  if (els.logoutButton) els.logoutButton.hidden = !isAuthenticated;
+}
+
+function renderRateLimit(rateLimit) {
+  const text = rateLimitText(rateLimit);
+  setLimitStatus(text);
+}
+
+function rateLimitText(rateLimit) {
+  if (!rateLimit) return "";
+  if (rateLimit.unlimited) {
+    return "OCR uploads: unlimited.";
+  }
+  const remaining = Number(rateLimit.remaining);
+  const limit = Number(rateLimit.limit);
+  if (!Number.isFinite(remaining) || !Number.isFinite(limit)) return "";
+  return `OCR uploads: ${remaining}/${limit} remaining this hour.`;
+}
+
+function setLimitStatus(message) {
+  if (!els.promptLimitStatus) return;
+  els.promptLimitStatus.textContent = message || "";
+}
+
 function renderChatOnlySessionShell() {
   els.selectedFilePreview.hidden = true;
   els.selectedFilePreview.innerHTML = "";
@@ -506,16 +631,36 @@ function renderMessages(messages) {
       const label = role === "user" ? "You" : "Jetson AI";
       const errorClass = message.error ? " is-error" : "";
       const content = role === "user" ? displayUserPrompt(message.content || "") : message.content || "";
+      const speed = role === "assistant" ? answerSpeedText(message) : "";
       return `
         <article class="chat-message ${role}${errorClass}">
           <div class="chat-role">${label}</div>
-          <div class="chat-bubble">${renderMarkdown(content)}</div>
+          <div class="chat-bubble">
+            <div class="chat-bubble-content">${renderMarkdown(content)}</div>
+            ${speed ? `<div class="chat-bubble-meta">${escapeHtml(speed)}</div>` : ""}
+          </div>
         </article>
       `;
     })
     .join("");
   updateOutputPlaceholderVisibility();
   els.outputCard.scrollTop = els.outputCard.scrollHeight;
+}
+
+function answerSpeedText(message) {
+  const elapsedMs = Number(message.elapsed_ms);
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return "";
+  const completionTokens = Number(message.completion_tokens);
+  const totalTokens = Number(message.total_tokens);
+  const tokens = Number.isFinite(completionTokens) && completionTokens > 0
+    ? completionTokens
+    : Number.isFinite(totalTokens) && totalTokens > 0
+      ? totalTokens
+      : 0;
+  if (tokens <= 0) return "";
+  const perSecond = tokens / (elapsedMs / 1000);
+  if (!Number.isFinite(perSecond) || perSecond <= 0) return "";
+  return `${Math.round(perSecond)} tok/s`;
 }
 
 function renderRecentSessions(sessions) {

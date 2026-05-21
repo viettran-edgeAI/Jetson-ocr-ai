@@ -7,6 +7,8 @@ cd "$SCRIPT_DIR"
 COMPOSE_ARGS=(-f docker-compose.yml -f docker-compose.gpu-test.yml)
 BUILD_IMAGES=1
 PUBLIC_CHECK=1
+LOCAL_TEST=0
+ENV_FILE="$SCRIPT_DIR/.env"
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -18,12 +20,13 @@ warn() {
 
 usage() {
   cat <<'EOF'
-Usage: ./start_app.sh [--build] [--no-build] [--skip-public-check]
+Usage: ./start_app.sh [--build] [--no-build] [--skip-public-check] [--local_test]
 
 Options:
   --build               Force image rebuild before starting (default behavior).
   --no-build            Start using existing images only.
   --skip-public-check   Skip https://jetsonocrai.cc readiness check.
+  --local_test          Local mode: WEB_APP_COOKIE_SECURE=0 and skip public check.
   -h, --help            Show this help message.
 EOF
 }
@@ -38,6 +41,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-public-check)
       PUBLIC_CHECK=0
+      ;;
+    --local_test|--local-test)
+      LOCAL_TEST=1
       ;;
     -h|--help)
       usage
@@ -57,6 +63,19 @@ require_cmd() {
     echo "Missing required command: $1" >&2
     exit 1
   fi
+}
+
+load_env_file() {
+  if [[ ! -f "$ENV_FILE" ]]; then
+    echo "Missing required .env file: $ENV_FILE" >&2
+    exit 1
+  fi
+
+  # Export everything sourced from .env for docker compose variable expansion.
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
 }
 
 cleanup_failed_startup() {
@@ -120,6 +139,17 @@ check_cloudflared() {
 require_cmd docker
 require_cmd curl
 
+load_env_file
+
+if (( LOCAL_TEST == 1 )); then
+  export WEB_APP_COOKIE_SECURE=0
+  PUBLIC_CHECK=0
+  log "Running in local test mode (WEB_APP_COOKIE_SECURE=0)."
+else
+  export WEB_APP_COOKIE_SECURE=1
+  log "Running in production mode (WEB_APP_COOKIE_SECURE=1)."
+fi
+
 if ! docker info >/dev/null 2>&1; then
   echo "Docker daemon is not reachable. Start Docker first." >&2
   exit 1
@@ -149,8 +179,12 @@ if ! check_http_ready "http://localhost:8080/sessions/recent" "web-app sessions 
   report_failure_and_cleanup "web-app sessions API did not become ready."
 fi
 
-log "Checking Cloudflare tunnel service..."
-check_cloudflared
+if (( LOCAL_TEST == 0 )); then
+  log "Checking Cloudflare tunnel service..."
+  check_cloudflared
+else
+  log "Cloudflare tunnel check skipped in local test mode."
+fi
 
 if (( PUBLIC_CHECK == 1 )); then
   log "Checking public endpoint..."

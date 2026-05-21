@@ -134,6 +134,16 @@ h1 {
   gap: 10px;
 }
 
+.account-status {
+  max-width: 260px;
+  overflow: hidden;
+  color: #40517a;
+  font-size: 13px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ghost-button {
   min-height: 36px;
   padding: 0 14px;
@@ -168,6 +178,72 @@ h1 {
 .icon-button svg {
   width: 22px;
   height: 22px;
+}
+
+.auth-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(7, 20, 50, 0.38);
+}
+
+.auth-dialog {
+  width: min(100%, 380px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+  box-shadow: 0 24px 60px rgba(17, 28, 68, 0.22);
+}
+
+.auth-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 10px;
+}
+
+.auth-header h2 {
+  color: #071432;
+  font-size: 18px;
+}
+
+.auth-form {
+  display: grid;
+  gap: 14px;
+  padding: 10px 20px 20px;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 7px;
+  color: #40517a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.auth-form input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 12px;
+  color: var(--text);
+  background: #fff;
+  outline: none;
+}
+
+.auth-form input:focus {
+  border-color: #715df2;
+  box-shadow: 0 0 0 4px rgba(74, 51, 221, 0.11);
+}
+
+.auth-form .primary-upload {
+  justify-content: center;
+  width: 100%;
+  margin-top: 4px;
 }
 
 .workspace {
@@ -593,6 +669,18 @@ h1 {
   line-height: 1.6;
 }
 
+.chat-bubble-content {
+  min-width: 0;
+}
+
+.chat-bubble-meta {
+  margin-top: 8px;
+  color: #68799d;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: right;
+}
+
 .chat-message.user .chat-bubble {
   color: #fff;
   border-color: #2357c7;
@@ -612,6 +700,7 @@ h1 {
 .prompt-form {
   display: grid;
   grid-template-columns: 1fr 48px;
+  align-items: center;
   gap: 10px;
   margin-top: 24px;
   padding: 8px 8px 8px 17px;
@@ -630,6 +719,16 @@ h1 {
 
 .prompt-form input::placeholder {
   color: #68769d;
+}
+
+.prompt-limit {
+  grid-column: 1 / -1;
+  min-height: 18px;
+  margin: 0;
+  color: #5c6a92;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
 }
 
 .send-button {
@@ -999,6 +1098,8 @@ body.dark .selected-meta strong,
 body.dark .quick-actions button,
 body.dark .session-menu button,
 body.dark .chat-bubble,
+body.dark .chat-bubble-meta,
+body.dark .prompt-limit,
 body.dark .ocr-result,
 body.dark .copy-button,
 body.dark .start-again-button,

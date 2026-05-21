@@ -34,6 +34,7 @@ Keep this document brief and update it whenever folders change.
 | `src/llm_service/main.py` | FastAPI wrapper that starts `llama-server` and exposes `/v1/answer`. |
 | `src/llm_service/smoke_test.py` | Local smoke test client for `question_0.md` and a simulated user request. |
 | `src/web_app/` | Public browser UI and session orchestration layer. |
+| `src/web_app/auth.py` | Local account, password hashing, signed cookie, and identity helpers. |
 | `src/web_app/main.py` | FastAPI app for uploads, session restore, OCR calls, and LLM calls. |
 | `src/web_app/store.py` | SQLite session and message persistence helper. |
 | `src/web_app/static/` | Static HTML, CSS, and JavaScript for the OCR AI Assistant interface. |
