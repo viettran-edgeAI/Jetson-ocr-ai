@@ -4,9 +4,11 @@ import base64
 import hashlib
 import hmac
 import secrets
+import struct
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 from fastapi import HTTPException, Request, Response
 
@@ -23,6 +25,8 @@ class Identity:
     owner_id: str
     tier: str
     email: str | None = None
+    username: str | None = None
+    avatar_key: str | None = None
     is_authenticated: bool = False
 
 
@@ -84,6 +88,11 @@ def new_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+def new_numeric_code(length: int = 6) -> str:
+    upper_bound = 10**length
+    return f"{secrets.randbelow(upper_bound):0{length}d}"
+
+
 def new_guest_id() -> str:
     return secrets.token_urlsafe(24)
 
@@ -91,6 +100,51 @@ def new_guest_id() -> str:
 def validate_password(password: str) -> None:
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if password.isalpha() or password.isdigit():
+        raise HTTPException(status_code=400, detail="Password must include mixed character types.")
+
+
+def new_totp_secret() -> str:
+    return base64.b32encode(secrets.token_bytes(20)).decode("ascii").rstrip("=")
+
+
+def normalize_totp_secret(secret: str) -> bytes:
+    cleaned = secret.strip().replace(" ", "").upper()
+    padding = "=" * ((8 - len(cleaned) % 8) % 8)
+    return base64.b32decode((cleaned + padding).encode("ascii"), casefold=True)
+
+
+def totp_code(secret: str, *, for_time: int | None = None, step_seconds: int = 30) -> str:
+    timestamp = epoch_seconds() if for_time is None else int(for_time)
+    counter = timestamp // step_seconds
+    digest = hmac.new(
+        normalize_totp_secret(secret),
+        struct.pack(">Q", counter),
+        hashlib.sha1,
+    ).digest()
+    offset = digest[-1] & 0x0F
+    code_int = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
+    return f"{code_int % 1_000_000:06d}"
+
+
+def verify_totp(secret: str, code: str, *, window: int = 1, at_time: int | None = None) -> bool:
+    cleaned = "".join(ch for ch in code if ch.isdigit())
+    if len(cleaned) != 6:
+        return False
+    timestamp = epoch_seconds() if at_time is None else int(at_time)
+    for offset in range(-window, window + 1):
+        expected = totp_code(secret, for_time=timestamp + offset * 30)
+        if hmac.compare_digest(cleaned, expected):
+            return True
+    return False
+
+
+def otpauth_uri(*, issuer: str, account_name: str, secret: str) -> str:
+    label = f"{issuer}:{account_name}"
+    return (
+        f"otpauth://totp/{quote(label)}"
+        f"?secret={quote(secret)}&issuer={quote(issuer)}&algorithm=SHA1&digits=6&period=30"
+    )
 
 
 def validate_secret_key(secret_key: str) -> None:

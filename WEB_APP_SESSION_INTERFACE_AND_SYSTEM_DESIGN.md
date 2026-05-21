@@ -23,7 +23,7 @@ It should:
 - call `llm-service`
 - keep a small persistent session history scoped to the current registered user or guest identity
 
-The current web app supports registered users, signed guest identities, user-scoped session history, and hourly OCR-upload limits by tier.
+The current web app supports signed guest identities, verified local accounts with username-based account controls, email verification, TOTP two-factor login, user-scoped session history, and hourly OCR-upload limits by tier.
 
 ## Interface Requirements
 
@@ -40,12 +40,16 @@ The current web app supports registered users, signed guest identities, user-sco
 - Show the product name: `OCR AI Assistant`.
 - Show a short subtitle such as `Extract text and get intelligent answers`.
 - Keep a utility area on the right for theme/help plus common site-shell actions such as login, logout, and related account links.
+- Show authenticated users by username only in the header, using the username color to reflect tier instead of showing a separate avatar or tier badge.
+- Clicking the username should open an account-management panel with email, tier, usage, and account actions.
+- Use tier colors consistently: gray for guest, light blue for free, dark green for pro, and red for owner.
 
 ### Input panel
 
 - Use a large drop zone with a dashed accent border.
 - Support drag and drop, file picker upload, and clipboard paste for images.
 - Show a clear upload button.
+- Show the hourly OCR usage limit message in the upload area rather than beside the chat input.
 - Display supported file types prominently.
 - For the first version, the UI should only advertise formats the backend actually accepts: PNG, JPG, JPEG, and PDF.
 - If a file type is not supported, fail fast with a clear message.
@@ -231,6 +235,7 @@ The web app should:
 - Keep the prompt area active.
 - Show a loading indicator while the LLM request is in flight.
 - Preserve the OCR output while the answer is generated.
+- Warm the LLM path on service startup so the first chat response is not substantially slower than later responses.
 
 ### Error state
 

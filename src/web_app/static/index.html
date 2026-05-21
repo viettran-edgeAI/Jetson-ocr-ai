@@ -23,7 +23,9 @@
           </div>
         </div>
         <div class="utility-actions">
-          <span class="account-status" id="accountStatus">Guest</span>
+          <button class="account-status tier-gray" id="accountStatus" type="button">
+            <span class="account-name" id="accountName">Guest</span>
+          </button>
           <nav class="site-actions" aria-label="Site actions">
             <button class="ghost-button" id="pricingButton" type="button">Pricing</button>
             <button class="ghost-button" id="loginButton" type="button">Log in</button>
@@ -76,6 +78,7 @@
               <button class="start-again-button" id="startAgainButton" type="button" hidden>
                 Start again
               </button>
+              <p class="upload-limit" id="uploadLimitStatus" aria-live="polite"></p>
               <p class="state-text" id="uploadState" aria-live="polite"></p>
             </div>
           </div>
@@ -111,7 +114,6 @@
                 <path d="M4 4.5 20 12 4 19.5v-6l9-1.5-9-1.5z" />
               </svg>
             </button>
-            <p class="prompt-limit" id="promptLimitStatus" aria-live="polite"></p>
           </form>
 
           <div class="quick-actions">
@@ -171,17 +173,106 @@
           </button>
         </div>
         <form class="auth-form" id="authForm">
-          <label>
-            <span>Email</span>
-            <input id="authEmail" type="email" autocomplete="email" required />
-          </label>
-          <label>
-            <span>Password</span>
-            <input id="authPassword" type="password" autocomplete="current-password" minlength="8" required />
-          </label>
+          <div class="auth-credentials" id="authCredentialsFields">
+            <label class="signup-only" id="authUsernameWrap">
+              <span>Username</span>
+              <input id="authUsername" type="text" autocomplete="username" minlength="3" maxlength="32" />
+            </label>
+            <label>
+              <span>Email</span>
+              <input id="authEmail" type="email" autocomplete="email" required />
+            </label>
+            <label>
+              <span>Password</span>
+              <input id="authPassword" type="password" autocomplete="current-password" minlength="8" required />
+            </label>
+            <label class="signup-only" id="authPasswordConfirmWrap">
+              <span>Confirm password</span>
+              <input id="authPasswordConfirm" type="password" autocomplete="new-password" minlength="8" />
+            </label>
+            <label class="auth-honeypot" aria-hidden="true">
+              <span>Website</span>
+              <input id="authWebsite" type="text" tabindex="-1" autocomplete="off" />
+            </label>
+          </div>
+          <div class="auth-step-panel" id="emailVerificationFields" hidden>
+            <label>
+              <span>Email verification code</span>
+              <input id="emailVerificationCode" type="text" inputmode="numeric" autocomplete="one-time-code" />
+            </label>
+          </div>
           <button class="primary-upload" id="authSubmitButton" type="submit">Log in</button>
           <p class="state-text" id="authStatus" aria-live="polite"></p>
         </form>
+      </div>
+    </div>
+
+    <div class="auth-modal" id="accountModal" hidden>
+      <div class="auth-dialog account-dialog" role="dialog" aria-modal="true" aria-labelledby="accountTitle">
+        <div class="auth-header">
+          <h2 id="accountTitle">Account</h2>
+          <button class="icon-button" id="accountCloseButton" type="button" aria-label="Close" title="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </button>
+        </div>
+        <div class="account-panel" id="accountPanel">
+          <div class="account-summary">
+            <span class="account-chip tier-gray" id="accountTierChip">GUEST</span>
+            <strong id="accountPanelUsername">Guest</strong>
+          </div>
+          <dl class="account-details" id="accountDetails">
+            <div>
+              <dt>Email</dt>
+              <dd id="accountEmail">Sign in to manage an account.</dd>
+            </div>
+            <div>
+              <dt>Tier</dt>
+              <dd id="accountTierValue">Guest</dd>
+            </div>
+            <div>
+              <dt>Usage</dt>
+              <dd id="accountUsage">OCR uploads: 10/10 remaining this hour.</dd>
+            </div>
+          </dl>
+          <div class="account-actions">
+            <button class="ghost-button" id="accountUpgradeButton" type="button">Upgrade account</button>
+            <button class="ghost-button danger-ghost" id="accountDeleteButton" type="button">Delete account</button>
+          </div>
+          <p class="state-text" id="accountStatusMessage" aria-live="polite"></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="auth-modal" id="helpModal" hidden>
+      <div class="auth-dialog account-dialog" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+        <div class="auth-header">
+          <h2 id="helpTitle">Help</h2>
+          <button class="icon-button" id="helpCloseButton" type="button" aria-label="Close" title="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </button>
+        </div>
+        <div class="account-panel">
+          <div class="help-block">
+            <h3>About this app</h3>
+            <p>Paste images/documents, extract OCR text, and get high-speed answers in one workspace.</p>
+          </div>
+          <div class="help-block">
+            <h3>How to use</h3>
+            <ul>
+              <li>Upload or paste image/PDF files into the input area.</li>
+              <li>Use the Copy button to copy OCR results quickly.</li>
+              <li>Chat directly, or use quick prompts: <strong>Answer this question</strong> and <strong>Solve this problem</strong>.</li>
+            </ul>
+          </div>
+          <div class="help-block">
+            <h3>Contact owner</h3>
+            <p><a href="mailto:tranvaviet@gmail.com">tranvaviet@gmail.com</a></p>
+          </div>
+        </div>
       </div>
     </div>
 

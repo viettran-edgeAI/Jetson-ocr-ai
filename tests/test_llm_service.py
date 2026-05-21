@@ -85,6 +85,14 @@ class LlmServiceConfigTests(unittest.TestCase):
         self.assertEqual(prepared["original_chars"], 100)
         self.assertIn("OCR Markdown truncated", prepared["text"])
 
+    def test_warmup_payload_keeps_thinking_disabled(self) -> None:
+        payload = llm_main.build_warmup_payload()
+
+        self.assertFalse(payload["stream"])
+        self.assertEqual(payload["max_tokens"], 1)
+        self.assertEqual(payload["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertEqual(payload["messages"][0]["role"], "user")
+
 
 if __name__ == "__main__":
     unittest.main()

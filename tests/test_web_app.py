@@ -28,6 +28,56 @@ class FakeUploadFile:
 
 
 class WebAppSessionTests(unittest.TestCase):
+    def solve_bot_question(self, question: str) -> str:
+        left, right = [int(part.strip()) for part in question.split("+", 1)]
+        return str(left + right)
+
+    def complete_signup(
+        self,
+        *,
+        email: str = "user@example.com",
+        username: str = "tester",
+        password: str = "password123",
+        avatar_key: str | None = None,
+    ) -> dict[str, object]:
+        sent_codes: dict[str, str] = {}
+        original_send_email = web_main.send_verification_email
+
+        def fake_send_email(target_email: str, code: str) -> None:
+            sent_codes[target_email] = code
+
+        web_main.send_verification_email = fake_send_email
+        try:
+            start = asyncio.run(
+                web_main.signup_start(
+                    web_main.SignupStartRequest(
+                        email=email,
+                        username=username,
+                        password=password,
+                        avatar_key=avatar_key,
+                    )
+                )
+            )
+            asyncio.run(
+                web_main.signup_verify_email(
+                    web_main.SignupVerifyEmailRequest(
+                        pending_id=start["pending_id"],
+                        code=sent_codes[email],
+                    )
+                )
+            )
+            completed = asyncio.run(
+                web_main.signup_complete(
+                    web_main.SignupCompleteRequest(
+                        pending_id=start["pending_id"],
+                    ),
+                    Response(),
+                )
+            )
+        finally:
+            web_main.send_verification_email = original_send_email
+        return completed
+
     def test_upload_validation_accepts_only_supported_formats(self) -> None:
         web_main.validate_upload("scan.png", "image/png")
         web_main.validate_upload("scan.jpg", "image/jpeg")
@@ -183,18 +233,168 @@ class WebAppSessionTests(unittest.TestCase):
                 created_at="2026-05-20T00:00:00+00:00",
             )
             try:
-                response = asyncio.run(
-                    web_main.signup(
-                        web_main.AuthRequest(email="owner@example.com", password="password123"),
-                        Response(),
-                    )
+                response = self.complete_signup(
+                    email="owner@example.com",
+                    username="owner_admin",
+                    password="password123",
                 )
             finally:
                 web_main.store = original_store
                 web_main.OWNER_EMAIL = original_owner_email
 
         self.assertEqual(response["user"]["tier"], "owner")
+        self.assertEqual(response["user"]["username"], "owner_admin")
         self.assertEqual(response["rate_limit"]["unlimited"], True)
+
+    def test_signup_defaults_avatar_when_omitted(self) -> None:
+        original_store = web_main.store
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_store = SessionStore(Path(tmpdir) / "sessions.sqlite3")
+            web_main.store = temp_store
+            try:
+                response = self.complete_signup(email="avatar@example.com", username="avataruser")
+            finally:
+                web_main.store = original_store
+
+        self.assertEqual(response["user"]["avatar_key"], web_main.DEFAULT_AVATAR_KEY)
+
+    def test_signup_fails_without_smtp_when_debug_codes_disabled(self) -> None:
+        original_smtp_host = web_main.SMTP_HOST
+        original_debug_codes = web_main.AUTH_DEBUG_CODES
+        try:
+            web_main.SMTP_HOST = ""
+            web_main.AUTH_DEBUG_CODES = False
+            with self.assertRaises(HTTPException) as raised:
+                asyncio.run(
+                    web_main.signup_start(
+                        web_main.SignupStartRequest(
+                            email="smtp@example.com",
+                            username="smtpuser",
+                            password="password123",
+                        )
+                    )
+                )
+        finally:
+            web_main.SMTP_HOST = original_smtp_host
+            web_main.AUTH_DEBUG_CODES = original_debug_codes
+
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("SMTP", raised.exception.detail)
+
+    def test_signup_restart_allowed_for_incomplete_account_without_password_match(self) -> None:
+        original_store = web_main.store
+        original_send_email = web_main.send_verification_email
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_store = SessionStore(Path(tmpdir) / "sessions.sqlite3")
+            now = "2026-05-21T00:00:00+00:00"
+            temp_store.create_user(
+                user_id="user-1",
+                email="owner@example.com",
+                username="owner_start",
+                password_hash=web_main.hash_password("old-password"),
+                avatar_key=web_main.DEFAULT_AVATAR_KEY,
+                tier="free",
+                disabled=False,
+                created_at=now,
+            )
+            sent_codes: dict[str, str] = {}
+
+            def fake_send_email(target_email: str, code: str) -> None:
+                sent_codes[target_email] = code
+
+            web_main.store = temp_store
+            web_main.send_verification_email = fake_send_email
+            try:
+                response = asyncio.run(
+                    web_main.signup_start(
+                        web_main.SignupStartRequest(
+                            email="owner@example.com",
+                            username="owner_start",
+                            password="new-password-123",
+                        )
+                    )
+                )
+            finally:
+                web_main.store = original_store
+                web_main.send_verification_email = original_send_email
+
+        self.assertEqual(response["status"], "verification_sent")
+        self.assertIn("owner@example.com", sent_codes)
+
+    def test_identity_serialization_uses_username_avatar_and_hides_email(self) -> None:
+        identity = Identity(
+            owner_type="user",
+            owner_id="user-1",
+            tier="pro",
+            email="hidden@example.com",
+            username="displayname",
+            avatar_key="sage",
+            is_authenticated=True,
+        )
+
+        response = web_main.serialize_identity(identity)
+
+        self.assertNotIn("email", response["identity"])
+        self.assertEqual(response["identity"]["username"], "displayname")
+        self.assertEqual(response["identity"]["avatar_key"], "sage")
+        self.assertEqual(response["identity"]["tier_color"], "dark-green")
+
+    def test_account_details_include_email_and_usage_for_authenticated_user(self) -> None:
+        original_store = web_main.store
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_store = SessionStore(Path(tmpdir) / "sessions.sqlite3")
+            web_main.store = temp_store
+            try:
+                signup = self.complete_signup(email="account@example.com", username="accountuser")
+                identity = Identity(
+                    owner_type="user",
+                    owner_id=str(signup["user"]["id"]),
+                    tier="free",
+                    email="account@example.com",
+                    username="accountuser",
+                    is_authenticated=True,
+                )
+                response = asyncio.run(web_main.account_details(identity=identity))
+            finally:
+                web_main.store = original_store
+
+        self.assertEqual(response["account"]["email"], "account@example.com")
+        self.assertEqual(response["account"]["tier"], "free")
+        self.assertEqual(response["account"]["usage"]["limit"], web_main.OCR_UPLOAD_LIMITS["free"])
+
+    def test_login_succeeds_without_two_factor(self) -> None:
+        original_store = web_main.store
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_store = SessionStore(Path(tmpdir) / "sessions.sqlite3")
+            web_main.store = temp_store
+            try:
+                self.complete_signup(email="login@example.com", username="loginuser")
+                login = asyncio.run(
+                    web_main.login(
+                        web_main.AuthRequest(email="login@example.com", password="password123"),
+                        Response(),
+                    )
+                )
+            finally:
+                web_main.store = original_store
+
+        self.assertEqual(login["requires_two_factor"], False)
+        self.assertEqual(login["user"]["username"], "loginuser")
+
+    def test_signup_allows_duplicate_usernames(self) -> None:
+        original_store = web_main.store
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_store = SessionStore(Path(tmpdir) / "sessions.sqlite3")
+            web_main.store = temp_store
+            try:
+                first = self.complete_signup(email="dup1@example.com", username="same_name")
+                second = self.complete_signup(email="dup2@example.com", username="same_name")
+            finally:
+                web_main.store = original_store
+
+        self.assertEqual(first["user"]["username"], "same_name")
+        self.assertEqual(second["user"]["username"], "same_name")
+        self.assertNotEqual(first["user"]["id"], second["user"]["id"])
 
     def test_session_routes_are_scoped_to_identity(self) -> None:
         original_store = web_main.store
@@ -512,6 +712,40 @@ class WebAppSessionTests(unittest.TestCase):
             session = store.get_session("legacy-1", owner_type="user", owner_id="owner-1")
 
         self.assertIsNotNone(session)
+
+    def test_session_store_backfills_legacy_user_profile_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "sessions.sqlite3"
+            with sqlite3.connect(db_path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE users (
+                        id TEXT PRIMARY KEY,
+                        email TEXT NOT NULL UNIQUE,
+                        password_hash TEXT,
+                        tier TEXT NOT NULL DEFAULT 'free',
+                        disabled INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
+
+                    INSERT INTO users (
+                        id, email, password_hash, tier, disabled, created_at, updated_at
+                    )
+                    VALUES (
+                        'user-1', 'legacy.user@example.com', 'hash', 'free', 0,
+                        '2026-05-20T00:00:00+00:00', '2026-05-20T00:00:00+00:00'
+                    );
+                    """
+                )
+
+            store = SessionStore(db_path)
+            user = store.get_user_by_email("legacy.user@example.com")
+
+        self.assertIsNotNone(user)
+        assert user is not None
+        self.assertEqual(user["username"], "legacy_user")
+        self.assertEqual(user["avatar_key"], "default")
 
 
 if __name__ == "__main__":

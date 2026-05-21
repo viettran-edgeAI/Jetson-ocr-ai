@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import subprocess
 import time
@@ -66,6 +67,13 @@ EXTERNAL_LLAMA_SERVER = os.environ.get("LLM_EXTERNAL_LLAMA_SERVER", "0").lower()
     "true",
     "yes",
 }
+WARMUP_ON_STARTUP = os.environ.get("LLM_WARMUP_ON_STARTUP", "1").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+
+logger = logging.getLogger(__name__)
 
 
 class ConversationMessage(BaseModel):
@@ -98,6 +106,7 @@ class LlamaServer:
     async def start(self) -> None:
         if EXTERNAL_LLAMA_SERVER:
             await wait_for_llama_ready()
+            await maybe_warmup_llama()
             return
 
         if not MODEL_PATH.exists():
@@ -110,6 +119,7 @@ class LlamaServer:
             text=True,
         )
         await wait_for_llama_ready(process=self.process)
+        await maybe_warmup_llama()
 
     async def stop(self) -> None:
         if self.process is None:
@@ -287,6 +297,21 @@ def build_chat_payload(
     return payload
 
 
+def build_warmup_payload() -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": MODEL_ALIAS,
+        "messages": [{"role": "user", "content": "Warm the model and reply with one short token."}],
+        "max_tokens": 1,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "top_k": 1,
+        "stream": False,
+    }
+    if DISABLE_THINKING:
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    return payload
+
+
 def prepare_conversation_history(
     conversation_history: list[ConversationMessage],
 ) -> list[dict[str, str]]:
@@ -342,6 +367,15 @@ async def wait_for_llama_ready(process: subprocess.Popen[str] | None = None) -> 
             return
         await asyncio.sleep(1)
     raise RuntimeError(f"llama-server did not become ready: {last_error}")
+
+
+async def maybe_warmup_llama() -> None:
+    if not WARMUP_ON_STARTUP:
+        return
+    try:
+        await asyncio.to_thread(post_json, "/v1/chat/completions", build_warmup_payload())
+    except Exception as exc:
+        logger.warning("llama warmup failed: %s", exc)
 
 
 async def is_llama_ready() -> bool:

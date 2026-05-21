@@ -16,7 +16,7 @@ This README is a concise project overview. The detailed browser UI and session d
 - `llm-service` works with Gemma GGUF, thinking disabled, and an 8096-token context window.
 - The sample QA fixture in `data/ocr_markdown_run_v2/documents/question_0.md` is validated.
 - `web-app` now provides the browser session layer, chat-first prompt flow, automatic OCR attachment into the current session context, OCR preview, persistent recent sessions, cache-busted public assets for `jetsonocrai.cc`, and bulk session selection/deletion.
-- `web-app` supports local email/password accounts, guest identities, user-scoped recent sessions, and hourly OCR-upload rate limits by tier.
+- `web-app` supports guest identities plus verified local accounts with username-based account controls, email verification, TOTP two-factor login, user-scoped recent sessions, and hourly OCR-upload rate limits by tier.
 
 ## System At A Glance
 
@@ -85,9 +85,14 @@ Multi-user web-app settings:
 WEB_APP_SECRET_KEY=replace-with-at-least-32-random-characters
 WEB_APP_OWNER_EMAIL=your-email@example.com
 WEB_APP_COOKIE_SECURE=1
+WEB_APP_SMTP_HOST=smtp.example.com
+WEB_APP_SMTP_USERNAME=mailer@example.com
+WEB_APP_SMTP_PASSWORD=replace-me
 ```
 
 `start_app.sh` loads these values from `.env` automatically. The `--local_test` flag forces `WEB_APP_COOKIE_SECURE=0`; without it, startup forces `WEB_APP_COOKIE_SECURE=1`. `WEB_APP_OWNER_EMAIL` marks the no-limit owner account. Existing single-user sessions are assigned to that owner when the web app starts with this value set.
+
+SMTP settings are required for normal signup verification. If SMTP is not configured, signup now fails clearly instead of silently writing verification codes to a local outbox. Set `WEB_APP_AUTH_DEBUG_CODES=1` only for local testing if the browser should display verification codes directly.
 
 The local origin is `http://localhost:8080`, but production validation should be done against `https://jetsonocrai.cc`. Public traffic should go to `web-app`; OCR and LLM services are addressed internally by Compose service name.
 
@@ -99,6 +104,12 @@ Cold-start optimization is enabled by default in `ocr-service`:
 This shifts OCR model load and first-pass warmup from the first uploaded file to container startup so first user OCR latency stays close to steady-state behavior.
 
 To reduce GPU-memory startup contention, Compose starts `llm` first and starts `ocr` (with preload/warmup) only after `llm` is healthy.
+
+Cold-start optimization is also enabled by default in `llm-service`:
+
+- `LLM_WARMUP_ON_STARTUP=1`
+
+This sends a tiny warmup request after `llama-server` becomes healthy so the first user chat request is closer to steady-state latency.
 
 ## Public Access
 

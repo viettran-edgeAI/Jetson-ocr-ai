@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import mimetypes
 import os
 import re
+import secrets
+import smtplib
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 from urllib import error, request
@@ -30,6 +34,7 @@ from .auth import (
     hash_password,
     hash_token,
     new_guest_id,
+    new_numeric_code,
     new_token,
     normalize_email,
     set_signed_cookie,
@@ -57,6 +62,15 @@ REQUEST_TIMEOUT_SECONDS = float(os.environ.get("WEB_REQUEST_TIMEOUT_SECONDS", "3
 SECRET_KEY = os.environ.get("WEB_APP_SECRET_KEY", "dev-insecure-change-me")
 OWNER_EMAIL = normalize_email(os.environ.get("WEB_APP_OWNER_EMAIL", ""))
 COOKIE_SECURE = os.environ.get("WEB_APP_COOKIE_SECURE", "0").strip().lower() in {"1", "true", "yes"}
+DEFAULT_AVATAR_KEY = os.environ.get("WEB_APP_DEFAULT_AVATAR_KEY", "atlas").strip() or "atlas"
+AUTH_OUTBOX_PATH = Path(os.environ.get("WEB_APP_AUTH_OUTBOX_PATH", WEB_DATA_DIR / "auth_outbox.jsonl"))
+AUTH_DEBUG_CODES = os.environ.get("WEB_APP_AUTH_DEBUG_CODES", "0").strip().lower() in {"1", "true", "yes"}
+SMTP_HOST = os.environ.get("WEB_APP_SMTP_HOST", "").strip()
+SMTP_PORT = int(os.environ.get("WEB_APP_SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("WEB_APP_SMTP_USERNAME", "").strip()
+SMTP_PASSWORD = os.environ.get("WEB_APP_SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("WEB_APP_SMTP_FROM", SMTP_USERNAME or "no-reply@jetsonocrai.cc").strip()
+SMTP_STARTTLS = os.environ.get("WEB_APP_SMTP_STARTTLS", "1").strip().lower() in {"1", "true", "yes"}
 
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".pdf"}
 ALLOWED_CONTENT_TYPES = {
@@ -73,6 +87,12 @@ OCR_UPLOAD_LIMITS = {
     "free": 50,
     "pro": 2000,
 }
+AVATAR_KEYS = {"atlas", "nova", "sage", "ember", "orbit", "pixel"}
+RESERVED_USERNAMES = {"admin", "api", "auth", "guest", "owner", "root", "support", "system"}
+PENDING_SIGNUP_HOURS = 2
+BOT_CHALLENGE_MINUTES = 10
+AUTH_ATTEMPT_LIMIT = 30
+AUTH_ATTEMPT_ACTION = "auth_attempt"
 
 for path in (UPLOAD_DIR, OCR_DIR):
     path.mkdir(parents=True, exist_ok=True)
@@ -107,6 +127,30 @@ class BulkDeleteSessionsRequest(BaseModel):
     session_ids: list[str] = Field(..., min_length=1, max_length=200)
 
 
+class BotChallengeProof(BaseModel):
+    challenge_id: str = Field(..., min_length=1, max_length=128)
+    answer: str = Field(..., min_length=1, max_length=32)
+    website: str | None = Field(default="", max_length=200)
+
+
+class SignupStartRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=254)
+    username: str = Field(..., min_length=3, max_length=32)
+    password: str = Field(..., min_length=8, max_length=256)
+    avatar_key: str | None = Field(default=None, max_length=32)
+    website: str | None = Field(default="", max_length=200)
+    bot_challenge: BotChallengeProof | None = None
+
+
+class SignupVerifyEmailRequest(BaseModel):
+    pending_id: str = Field(..., min_length=1, max_length=128)
+    code: str = Field(..., min_length=4, max_length=32)
+
+
+class SignupCompleteRequest(BaseModel):
+    pending_id: str = Field(..., min_length=1, max_length=128)
+
+
 class AuthRequest(BaseModel):
     email: str = Field(..., min_length=3, max_length=254)
     password: str = Field(..., min_length=8, max_length=256)
@@ -131,7 +175,14 @@ async def current_identity(request: Request, response: Response) -> Identity:
             max_age=guest_cookie_max_age(),
             secure=COOKIE_SECURE,
         )
-    return Identity(owner_type="guest", owner_id=guest_id, tier="guest", is_authenticated=False)
+    return Identity(
+        owner_type="guest",
+        owner_id=guest_id,
+        tier="guest",
+        username="Guest",
+        avatar_key="guest",
+        is_authenticated=False,
+    )
 
 
 @app.get("/")
@@ -157,44 +208,88 @@ async def auth_me(
     return serialize_identity(identity)
 
 
-@app.post("/auth/signup")
-async def signup(auth: AuthRequest, response: Response) -> dict[str, Any]:
-    email = normalize_email(auth.email)
-    validate_password(auth.password)
-    if not email or "@" not in email:
-        raise HTTPException(status_code=400, detail="A valid email address is required.")
+@app.get("/auth/bot-challenge")
+async def bot_challenge() -> dict[str, Any]:
+    return create_bot_challenge_response()
+
+
+@app.post("/auth/signup/start")
+async def signup_start(signup: SignupStartRequest) -> dict[str, Any]:
+    email = normalize_signup_email(signup.email)
+    username = normalize_username(signup.username)
+    avatar_key = normalize_avatar_key(signup.avatar_key)
+    validate_password(signup.password)
+    assert_auth_attempt_allowed(email)
+    verify_signup_honeypot(signup.website)
+    if signup.bot_challenge is not None:
+        verify_bot_challenge(signup.bot_challenge)
 
     now = utc_now()
-    tier = "owner" if OWNER_EMAIL and email == OWNER_EMAIL else "free"
-    existing = store.get_user_by_email(email)
-    password_hash = hash_password(auth.password)
-    if existing is not None:
-        if existing.get("disabled") and not existing.get("password_hash"):
-            user = store.activate_placeholder_user(
-                user_id=existing["id"],
-                password_hash=password_hash,
-                tier=tier,
-                updated_at=now,
-            )
+    store.prune_pending_signups(now)
+    existing_user = store.get_user_by_email(email)
+    activate_user_id: str | None = None
+    if existing_user is not None:
+        if can_start_upgrade_for_user(existing_user, signup.password):
+            activate_user_id = str(existing_user["id"])
         else:
             raise HTTPException(status_code=409, detail="An account with this email already exists.")
-    else:
-        user = store.create_user(
-            user_id=uuid.uuid4().hex,
-            email=email,
-            password_hash=password_hash,
-            tier=tier,
-            disabled=False,
-            created_at=now,
-        )
 
+    code = new_numeric_code()
+    tier = "owner" if OWNER_EMAIL and email == OWNER_EMAIL else "free"
+    if existing_user is not None:
+        tier = "owner" if OWNER_EMAIL and email == OWNER_EMAIL else str(existing_user.get("tier") or tier)
+    pending = store.upsert_pending_signup(
+        pending_id=uuid.uuid4().hex,
+        email=email,
+        username=username,
+        password_hash=hash_password(signup.password),
+        avatar_key=avatar_key,
+        tier=tier,
+        email_code_hash=hash_token(code),
+        activate_user_id=activate_user_id,
+        bot_passed_at=now,
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=PENDING_SIGNUP_HOURS)).isoformat(),
+        created_at=now,
+    )
+    send_verification_email(email, code)
+    response: dict[str, Any] = {
+        "pending_id": pending["id"],
+        "status": "verification_sent",
+        "expires_at": pending["expires_at"],
+    }
+    if AUTH_DEBUG_CODES:
+        response["verification_code"] = code
+    return response
+
+
+@app.post("/auth/signup/verify-email")
+async def signup_verify_email(request_body: SignupVerifyEmailRequest) -> dict[str, Any]:
+    pending = require_pending_signup(request_body.pending_id)
+    if not hmac_safe_hash_match(request_body.code, str(pending["email_code_hash"])):
+        raise HTTPException(status_code=400, detail="Invalid verification code.")
+    updated = store.mark_pending_email_verified(pending_id=pending["id"], verified_at=utc_now())
+    return {"pending_id": updated["id"], "status": "email_verified"}
+
+
+@app.post("/auth/signup/complete")
+async def signup_complete(request_body: SignupCompleteRequest, response: Response) -> dict[str, Any]:
+    pending = require_pending_signup(request_body.pending_id)
+    if not pending.get("email_verified_at"):
+        raise HTTPException(status_code=409, detail="Verify your email before completing signup.")
+
+    user = finalize_pending_signup(pending)
+    store.delete_pending_signup(pending["id"])
     issue_auth_cookie(response, user["id"])
-    return {"user": serialize_user(user), "rate_limit": rate_limit_status(identity_from_user(user))}
+    return {
+        "user": serialize_user(user),
+        "rate_limit": rate_limit_status(identity_from_user(user)),
+    }
 
 
 @app.post("/auth/login")
 async def login(auth: AuthRequest, response: Response) -> dict[str, Any]:
-    email = normalize_email(auth.email)
+    email = normalize_signup_email(auth.email)
+    assert_auth_attempt_allowed(email)
     user = store.get_user_by_email(email)
     if (
         user is None
@@ -202,17 +297,20 @@ async def login(auth: AuthRequest, response: Response) -> dict[str, Any]:
         or not user.get("password_hash")
         or not verify_password(auth.password, str(user["password_hash"]))
     ):
+        record_auth_attempt(email)
         raise HTTPException(status_code=401, detail="Invalid email or password.")
 
     if OWNER_EMAIL and user["email"] == OWNER_EMAIL and user["tier"] != "owner":
-        user = store.activate_placeholder_user(
-            user_id=user["id"],
-            password_hash=str(user["password_hash"]),
-            tier="owner",
-            updated_at=utc_now(),
+        user = store.update_user_tier(user_id=user["id"], tier="owner", updated_at=utc_now())
+    if account_requires_upgrade(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Account requires email verification. Start signup again with this email.",
         )
+    now = utc_now()
+    store.record_successful_login(user_id=user["id"], logged_in_at=now)
     issue_auth_cookie(response, user["id"])
-    return {"user": serialize_user(user), "rate_limit": rate_limit_status(identity_from_user(user))}
+    return {"requires_two_factor": False, "user": serialize_user(user), "rate_limit": rate_limit_status(identity_from_user(user))}
 
 
 @app.post("/auth/logout")
@@ -228,6 +326,13 @@ async def logout(request: Request, response: Response) -> dict[str, str]:
 async def account_rate_limit(identity: Identity = Depends(current_identity)) -> dict[str, Any]:
     identity = coerce_identity(identity)
     return rate_limit_status(identity)
+
+
+@app.get("/account")
+async def account_details(identity: Identity = Depends(current_identity)) -> dict[str, Any]:
+    identity = coerce_identity(identity)
+    user = require_authenticated_user(identity)
+    return {"account": serialize_account(user)}
 
 
 @app.get("/sessions/recent")
@@ -739,6 +844,186 @@ def file_type_label(filename: str, content_type: str) -> str:
     return "FILE"
 
 
+def normalize_signup_email(email: str) -> str:
+    normalized = normalize_email(email)
+    if not normalized or "@" not in normalized:
+        raise HTTPException(status_code=400, detail="A valid email address is required.")
+    return normalized
+
+
+def normalize_username(username: str) -> str:
+    normalized = username.strip().lower().lstrip("@")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{2,31}", normalized):
+        raise HTTPException(
+            status_code=400,
+            detail="Username must be 3-32 characters using letters, numbers, underscores, or hyphens.",
+        )
+    if normalized in RESERVED_USERNAMES:
+        raise HTTPException(status_code=400, detail="This username is reserved.")
+    return normalized
+
+
+def normalize_avatar_key(avatar_key: str | None) -> str:
+    cleaned = (avatar_key or "").strip().lower() or DEFAULT_AVATAR_KEY
+    allowed = set(AVATAR_KEYS)
+    allowed.add(DEFAULT_AVATAR_KEY)
+    if cleaned not in allowed:
+        raise HTTPException(status_code=400, detail="Selected avatar is not available.")
+    return cleaned
+
+
+def create_bot_challenge_response() -> dict[str, Any]:
+    left = secrets.randbelow(8) + 2
+    right = secrets.randbelow(8) + 2
+    now = utc_now()
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=BOT_CHALLENGE_MINUTES)).isoformat()
+    challenge_id = uuid.uuid4().hex
+    store.prune_auth_challenges(now)
+    store.create_bot_challenge(
+        challenge_id=challenge_id,
+        answer_hash=hash_token(str(left + right)),
+        expires_at=expires_at,
+        created_at=now,
+    )
+    return {
+        "challenge_id": challenge_id,
+        "question": f"{left} + {right}",
+        "expires_at": expires_at,
+    }
+
+
+def verify_bot_challenge(proof: BotChallengeProof) -> None:
+    if (proof.website or "").strip():
+        raise HTTPException(status_code=400, detail="Bot challenge failed.")
+    answer = proof.answer.strip()
+    if not store.consume_bot_challenge(
+        challenge_id=proof.challenge_id,
+        answer_hash=hash_token(answer),
+        consumed_at=utc_now(),
+    ):
+        raise HTTPException(status_code=400, detail="Bot challenge failed.")
+
+
+def verify_signup_honeypot(website: str | None) -> None:
+    if (website or "").strip():
+        raise HTTPException(status_code=400, detail="Signup could not be completed.")
+
+
+def assert_auth_attempt_allowed(email: str) -> None:
+    since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    count = store.count_rate_limit_events(
+        owner_type="auth",
+        owner_id=email,
+        action=AUTH_ATTEMPT_ACTION,
+        since=since,
+    )
+    if count >= AUTH_ATTEMPT_LIMIT:
+        raise HTTPException(status_code=429, detail="Too many authentication attempts. Try again later.")
+
+
+def record_auth_attempt(email: str) -> None:
+    store.add_rate_limit_event(
+        owner_type="auth",
+        owner_id=email,
+        action=AUTH_ATTEMPT_ACTION,
+        created_at=utc_now(),
+    )
+
+
+def send_verification_email(email: str, code: str) -> None:
+    subject = "Verify your OCR AI Assistant account"
+    body = f"Your verification code is {code}. It expires in {PENDING_SIGNUP_HOURS} hours."
+    if not SMTP_HOST:
+        if AUTH_DEBUG_CODES:
+            return
+        raise HTTPException(
+            status_code=503,
+            detail="Email verification is not available because SMTP is not configured.",
+        )
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = SMTP_FROM
+    message["To"] = email
+    message.set_content(body)
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as client:
+            if SMTP_STARTTLS:
+                client.starttls()
+            if SMTP_USERNAME:
+                client.login(SMTP_USERNAME, SMTP_PASSWORD)
+            client.send_message(message)
+    except OSError as exc:
+        raise HTTPException(status_code=502, detail="Verification email could not be sent.") from exc
+
+
+def require_pending_signup(pending_id: str) -> dict[str, Any]:
+    pending = store.get_pending_signup(pending_id, utc_now())
+    if pending is None:
+        raise HTTPException(status_code=404, detail="Signup session expired.")
+    return pending
+
+
+def can_start_upgrade_for_user(user: dict[str, Any], password: str) -> bool:
+    if user.get("disabled") and not user.get("password_hash"):
+        return True
+    if not account_requires_upgrade(user):
+        return False
+    # Email verification is the source of truth for account ownership in the
+    # simplified auth flow, so incomplete accounts can restart signup.
+    return True
+
+
+def account_requires_upgrade(user: dict[str, Any]) -> bool:
+    return not user.get("email_verified_at")
+
+
+def hmac_safe_hash_match(value: str, expected_hash: str) -> bool:
+    return hmac.compare_digest(hash_token(value.strip()), expected_hash)
+
+
+def finalize_pending_signup(pending: dict[str, Any]) -> dict[str, Any]:
+    now = utc_now()
+    email = str(pending["email"])
+    username = str(pending["username"])
+    activate_user_id = pending.get("activate_user_id")
+    existing_email_user = store.get_user_by_email(email)
+    if existing_email_user is not None and existing_email_user["id"] != activate_user_id:
+        raise HTTPException(status_code=409, detail="An account with this email already exists.")
+
+    tier = "owner" if OWNER_EMAIL and email == OWNER_EMAIL else str(pending["tier"])
+    if activate_user_id:
+        return store.update_user_auth_state(
+            user_id=str(activate_user_id),
+            username=username,
+            password_hash=str(pending["password_hash"]),
+            avatar_key=str(pending["avatar_key"]),
+            tier=tier,
+            email_verified_at=now,
+            updated_at=now,
+        )
+    return store.create_user(
+        user_id=uuid.uuid4().hex,
+        email=email,
+        username=username,
+        password_hash=str(pending["password_hash"]),
+        avatar_key=str(pending["avatar_key"]),
+        tier=tier,
+        disabled=False,
+        email_verified_at=now,
+        created_at=now,
+    )
+
+
+def tier_color(tier: str) -> str:
+    return {
+        "guest": "gray",
+        "free": "light-blue",
+        "pro": "dark-green",
+        "owner": "red",
+    }.get(tier, "gray")
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -773,6 +1058,8 @@ def identity_from_user(user: dict[str, Any]) -> Identity:
         owner_id=str(user["id"]),
         tier=tier,
         email=str(user["email"]),
+        username=str(user.get("username") or "user"),
+        avatar_key=str(user.get("avatar_key") or DEFAULT_AVATAR_KEY),
         is_authenticated=True,
     )
 
@@ -802,28 +1089,82 @@ def serialize_user(user: dict[str, Any]) -> dict[str, Any]:
         tier = "owner"
     return {
         "id": user["id"],
-        "email": user["email"],
+        "username": user.get("username") or "user",
+        "avatar_key": user.get("avatar_key") or DEFAULT_AVATAR_KEY,
         "tier": tier,
+        "tier_color": tier_color(tier),
+        "email_verified": bool(user.get("email_verified_at")),
+        "two_factor_enabled": bool(user.get("two_factor_enabled")),
+    }
+
+
+def serialize_account(user: dict[str, Any]) -> dict[str, Any]:
+    identity = identity_from_user(user)
+    rate_limit = rate_limit_status(identity)
+    if rate_limit["unlimited"]:
+        usage = {
+            "remaining": None,
+            "limit": None,
+            "unlimited": True,
+            "summary": "OCR uploads: unlimited.",
+        }
+    else:
+        usage = {
+            "remaining": rate_limit["remaining"],
+            "limit": rate_limit["limit"],
+            "unlimited": False,
+            "summary": f"{rate_limit['remaining']}/{rate_limit['limit']} remaining this hour",
+        }
+    return {
+        "id": user["id"],
+        "username": identity.username,
+        "email": identity.email,
+        "tier": identity.tier,
+        "tier_color": tier_color(identity.tier),
+        "usage": usage,
+        "rate_limit": rate_limit,
     }
 
 
 def serialize_identity(identity: Identity) -> dict[str, Any]:
+    username = identity.username or ("Guest" if identity.owner_type == "guest" else "user")
+    avatar_key = identity.avatar_key or ("guest" if identity.owner_type == "guest" else DEFAULT_AVATAR_KEY)
     return {
         "identity": {
             "type": identity.owner_type,
             "id": identity.owner_id,
-            "email": identity.email,
+            "username": username,
+            "avatar_key": avatar_key,
             "tier": identity.tier,
+            "tier_color": tier_color(identity.tier),
             "authenticated": identity.is_authenticated,
         },
         "rate_limit": rate_limit_status(identity),
     }
 
 
+def require_authenticated_user(identity: Identity) -> dict[str, Any]:
+    if not identity.is_authenticated or not identity.owner_id:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    user = store.get_user_by_id(identity.owner_id)
+    if user is None or user.get("disabled") or account_requires_upgrade(user):
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    if OWNER_EMAIL and user.get("email") == OWNER_EMAIL and user.get("tier") != "owner":
+        user = store.update_user_tier(user_id=user["id"], tier="owner", updated_at=utc_now())
+    return user
+
+
 def coerce_identity(value: Any) -> Identity:
     if isinstance(value, Identity):
         return value
-    return Identity(owner_type="user", owner_id="legacy-owner", tier="free", is_authenticated=True)
+    return Identity(
+        owner_type="user",
+        owner_id="legacy-owner",
+        tier="free",
+        username="user",
+        avatar_key=DEFAULT_AVATAR_KEY,
+        is_authenticated=True,
+    )
 
 
 def get_owned_session_or_404(session_id: str, identity: Identity) -> dict[str, Any]:
@@ -854,6 +1195,7 @@ def rate_limit_status(identity: Identity) -> dict[str, Any]:
     if limit is None:
         return {
             "tier": identity.tier,
+            "tier_color": tier_color(identity.tier),
             "limit": None,
             "remaining": None,
             "reset_at": None,
@@ -878,6 +1220,7 @@ def rate_limit_status(identity: Identity) -> dict[str, Any]:
         reset_at = (datetime.fromisoformat(oldest) + timedelta(hours=1)).isoformat()
     return {
         "tier": identity.tier,
+        "tier_color": tier_color(identity.tier),
         "limit": limit,
         "remaining": max(limit - count, 0),
         "reset_at": reset_at,

@@ -135,13 +135,48 @@ h1 {
 }
 
 .account-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   max-width: 260px;
   overflow: hidden;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
   color: #40517a;
+  background: rgba(255, 255, 255, 0.72);
   font-size: 13px;
   font-weight: 800;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.account-status:hover {
+  border-color: #b9c2eb;
+  background: #f8faff;
+}
+
+.account-name {
+  overflow: hidden;
+  max-width: 180px;
+  text-overflow: ellipsis;
+}
+
+.tier-gray.account-status {
+  color: #5c6577;
+}
+
+.tier-light-blue.account-status {
+  color: #2b6ea4;
+}
+
+.tier-dark-green.account-status {
+  color: #0b5d3f;
+}
+
+.tier-red.account-status {
+  color: #c62828;
 }
 
 .ghost-button {
@@ -198,6 +233,10 @@ h1 {
   box-shadow: 0 24px 60px rgba(17, 28, 68, 0.22);
 }
 
+.account-dialog {
+  width: min(100%, 440px);
+}
+
 .auth-header {
   display: flex;
   align-items: center;
@@ -216,12 +255,148 @@ h1 {
   padding: 10px 20px 20px;
 }
 
+.account-panel {
+  display: grid;
+  gap: 16px;
+  padding: 10px 20px 20px;
+}
+
+.auth-credentials,
+.auth-step-panel {
+  display: grid;
+  gap: 14px;
+}
+
 .auth-form label {
   display: grid;
   gap: 7px;
   color: #40517a;
   font-size: 13px;
   font-weight: 800;
+}
+
+.account-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-summary strong {
+  color: #071432;
+  font-size: 18px;
+}
+
+.account-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+}
+
+.tier-gray.account-chip {
+  color: #fff;
+  background: #687083;
+}
+
+.tier-light-blue.account-chip {
+  color: #07345f;
+  background: #64b5f6;
+}
+
+.tier-dark-green.account-chip {
+  color: #fff;
+  background: #0b5d3f;
+}
+
+.tier-red.account-chip {
+  color: #fff;
+  background: #c62828;
+}
+
+.account-details {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.account-details div {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faff;
+}
+
+.account-details dt {
+  color: #5d6d96;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.account-details dd {
+  margin: 0;
+  color: #071432;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.help-block {
+  display: grid;
+  gap: 8px;
+}
+
+.help-block h3 {
+  margin: 0;
+  color: #071432;
+  font-size: 15px;
+}
+
+.help-block p {
+  margin: 0;
+  color: #40517a;
+  line-height: 1.5;
+}
+
+.help-block ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #40517a;
+  line-height: 1.5;
+}
+
+.help-block a {
+  color: #1d52c9;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.help-block a:hover {
+  text-decoration: underline;
+}
+
+.danger-ghost {
+  border-color: #f0c2bf;
+  color: #a33a32;
+}
+
+.danger-ghost:hover {
+  border-color: #de9f9a;
+  background: #fff7f6;
 }
 
 .auth-form input {
@@ -238,6 +413,60 @@ h1 {
 .auth-form input:focus {
   border-color: #715df2;
   box-shadow: 0 0 0 4px rgba(74, 51, 221, 0.11);
+}
+
+.auth-honeypot {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.totp-secret {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8faff;
+  color: #40517a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.totp-secret code {
+  overflow-wrap: anywhere;
+  color: #071432;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+}
+
+.recovery-codes {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8faff;
+  color: #40517a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.recovery-codes div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.recovery-codes code {
+  padding: 6px 7px;
+  border-radius: 5px;
+  background: #fff;
+  color: #071432;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
 }
 
 .auth-form .primary-upload {
@@ -463,6 +692,14 @@ h1 {
   margin-top: 18px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.upload-limit {
+  min-height: 18px;
+  margin: 14px 0 0;
+  color: #5c6a92;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .state-text.error {
@@ -719,16 +956,6 @@ h1 {
 
 .prompt-form input::placeholder {
   color: #68769d;
-}
-
-.prompt-limit {
-  grid-column: 1 / -1;
-  min-height: 18px;
-  margin: 0;
-  color: #5c6a92;
-  font-size: 12px;
-  font-weight: 700;
-  text-align: center;
 }
 
 .send-button {
@@ -1084,7 +1311,12 @@ body.dark .chat-bubble,
 body.dark .session-menu,
 body.dark .empty-list,
 body.dark .ocr-toolbar,
-body.dark .ghost-button {
+body.dark .ghost-button,
+body.dark .account-status,
+body.dark .totp-secret,
+body.dark .account-details div,
+body.dark .recovery-codes,
+body.dark .recovery-codes code {
   background: rgba(22, 32, 54, 0.82);
 }
 
@@ -1099,12 +1331,23 @@ body.dark .quick-actions button,
 body.dark .session-menu button,
 body.dark .chat-bubble,
 body.dark .chat-bubble-meta,
-body.dark .prompt-limit,
+body.dark .upload-limit,
 body.dark .ocr-result,
 body.dark .copy-button,
 body.dark .start-again-button,
 body.dark .ghost-button,
-body.dark .selection-summary {
+body.dark .selection-summary,
+body.dark .account-status,
+body.dark .account-summary strong,
+body.dark .account-details dd,
+body.dark .help-block h3,
+body.dark .help-block p,
+body.dark .help-block ul,
+body.dark .help-block a,
+body.dark .totp-secret,
+body.dark .totp-secret code,
+body.dark .recovery-codes,
+body.dark .recovery-codes code {
   color: var(--text);
 }
 

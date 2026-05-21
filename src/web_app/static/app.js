@@ -11,7 +11,10 @@ const state = {
   selectedSessionIds: new Set(),
   recentSessionIds: [],
   account: null,
+  accountDetails: null,
+  rateLimit: null,
   authMode: "login",
+  signupPendingId: null,
 };
 
 let copyFeedbackTimer = null;
@@ -24,6 +27,7 @@ const els = {
   startAgainButton: document.querySelector("#startAgainButton"),
   selectedFilePreview: document.querySelector("#selectedFilePreview"),
   uploadState: document.querySelector("#uploadState"),
+  uploadLimitStatus: document.querySelector("#uploadLimitStatus"),
   dropTitle: document.querySelector("#dropTitle"),
   outputCard: document.querySelector("#outputCard"),
   emptyOutput: document.querySelector("#emptyOutput"),
@@ -34,11 +38,11 @@ const els = {
   answerResult: document.querySelector("#answerResult"),
   promptForm: document.querySelector("#promptForm"),
   promptInput: document.querySelector("#promptInput"),
-  promptLimitStatus: document.querySelector("#promptLimitStatus"),
   sendButton: document.querySelector("#sendButton"),
   sessionList: document.querySelector("#sessionList"),
   themeToggle: document.querySelector("#themeToggle"),
   accountStatus: document.querySelector("#accountStatus"),
+  accountName: document.querySelector("#accountName"),
   pricingButton: document.querySelector("#pricingButton"),
   loginButton: document.querySelector("#loginButton"),
   signupButton: document.querySelector("#signupButton"),
@@ -53,11 +57,31 @@ const els = {
   authModal: document.querySelector("#authModal"),
   authForm: document.querySelector("#authForm"),
   authTitle: document.querySelector("#authTitle"),
+  authCredentialsFields: document.querySelector("#authCredentialsFields"),
+  authUsernameWrap: document.querySelector("#authUsernameWrap"),
+  authUsername: document.querySelector("#authUsername"),
   authEmail: document.querySelector("#authEmail"),
   authPassword: document.querySelector("#authPassword"),
+  authPasswordConfirmWrap: document.querySelector("#authPasswordConfirmWrap"),
+  authPasswordConfirm: document.querySelector("#authPasswordConfirm"),
+  authWebsite: document.querySelector("#authWebsite"),
+  emailVerificationFields: document.querySelector("#emailVerificationFields"),
+  emailVerificationCode: document.querySelector("#emailVerificationCode"),
   authSubmitButton: document.querySelector("#authSubmitButton"),
   authCloseButton: document.querySelector("#authCloseButton"),
   authStatus: document.querySelector("#authStatus"),
+  accountModal: document.querySelector("#accountModal"),
+  accountCloseButton: document.querySelector("#accountCloseButton"),
+  accountPanelUsername: document.querySelector("#accountPanelUsername"),
+  accountTierChip: document.querySelector("#accountTierChip"),
+  accountEmail: document.querySelector("#accountEmail"),
+  accountTierValue: document.querySelector("#accountTierValue"),
+  accountUsage: document.querySelector("#accountUsage"),
+  accountUpgradeButton: document.querySelector("#accountUpgradeButton"),
+  accountDeleteButton: document.querySelector("#accountDeleteButton"),
+  accountStatusMessage: document.querySelector("#accountStatusMessage"),
+  helpModal: document.querySelector("#helpModal"),
+  helpCloseButton: document.querySelector("#helpCloseButton"),
 };
 
 const iconFile = `
@@ -166,11 +190,16 @@ function bindEvents() {
   on(els.themeToggle, "click", () => {
     document.body.classList.toggle("dark");
   });
+  on(els.accountStatus, "click", openAccountModal);
   on(els.pricingButton, "click", () => setStatus("Pricing is not configured."));
-  on(els.loginButton, "click", () => openAuthModal("login"));
-  on(els.signupButton, "click", () => openAuthModal("signup"));
+  on(els.loginButton, "click", () => {
+    openAuthModal("login").catch((error) => setStatus(error.message, "error"));
+  });
+  on(els.signupButton, "click", () => {
+    openAuthModal("signup").catch((error) => setStatus(error.message, "error"));
+  });
   on(els.logoutButton, "click", logout);
-  on(els.helpButton, "click", () => setStatus("Help center is not configured."));
+  on(els.helpButton, "click", openHelpModal);
   on(els.selectSessionsButton, "click", enterSelectionMode);
   on(els.selectAllSessionsButton, "click", toggleSelectAllSessions);
   on(els.cancelSelectionButton, "click", exitSelectionMode);
@@ -178,10 +207,11 @@ function bindEvents() {
 
   on(els.viewAllButton, "click", loadRecentSessions);
   on(els.authCloseButton, "click", closeAuthModal);
-  on(els.authModal, "click", (event) => {
-    if (event.target === els.authModal) closeAuthModal();
-  });
   on(els.authForm, "submit", submitAuthForm);
+  on(els.accountCloseButton, "click", closeAccountModal);
+  on(els.accountUpgradeButton, "click", () => setAccountStatus("Account upgrades are not configured yet."));
+  on(els.accountDeleteButton, "click", () => setAccountStatus("Account deletion is not configured yet."));
+  on(els.helpCloseButton, "click", closeHelpModal);
 }
 
 function attachFile(file) {
@@ -385,6 +415,8 @@ async function loadAccountState() {
     const response = await fetch("/auth/me");
     const data = await readJsonResponse(response);
     state.account = data.identity;
+    state.accountDetails = null;
+    state.rateLimit = data.rate_limit || null;
     renderAccountState(data.identity);
     renderRateLimit(data.rate_limit);
   } catch (error) {
@@ -402,16 +434,28 @@ async function ensureChatSession() {
   return data.id;
 }
 
-function openAuthModal(mode) {
+async function openAuthModal(mode) {
   state.authMode = mode;
+  state.signupPendingId = null;
   els.authTitle.textContent = mode === "signup" ? "Sign up" : "Log in";
   els.authSubmitButton.textContent = mode === "signup" ? "Sign up" : "Log in";
   els.authStatus.textContent = "";
   els.authStatus.className = "state-text";
+  els.authUsername.value = "";
   els.authEmail.value = "";
   els.authPassword.value = "";
+  if (els.authPasswordConfirm) {
+    els.authPasswordConfirm.value = "";
+  }
+  els.authWebsite.value = "";
+  els.emailVerificationCode.value = "";
+  renderAuthStage(mode === "signup" ? "signup" : "login");
   els.authModal.hidden = false;
-  els.authEmail.focus();
+  if (mode === "signup") {
+    els.authUsername.focus();
+  } else {
+    els.authEmail.focus();
+  }
 }
 
 function closeAuthModal() {
@@ -420,31 +464,126 @@ function closeAuthModal() {
 
 async function submitAuthForm(event) {
   event.preventDefault();
-  const email = els.authEmail.value.trim();
-  const password = els.authPassword.value;
-  if (!email || !password) return;
-
   els.authSubmitButton.disabled = true;
-  els.authStatus.textContent = state.authMode === "signup" ? "Creating account..." : "Logging in...";
+  els.authStatus.textContent = authBusyText();
   els.authStatus.className = "state-text";
   try {
-    const response = await fetch(`/auth/${state.authMode}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
-    await readJsonResponse(response);
-    closeAuthModal();
-    clearSelectedFile();
-    await loadAccountState();
-    await loadRecentSessions();
-    setStatus(state.authMode === "signup" ? "Account created." : "Logged in.", "success");
+    if (state.authMode === "signup") {
+      await startSignup();
+    } else if (state.authMode === "signup-verify") {
+      await verifySignupEmail();
+    } else {
+      await startLogin();
+    }
   } catch (error) {
     els.authStatus.textContent = error.message;
     els.authStatus.className = "state-text error";
   } finally {
     els.authSubmitButton.disabled = false;
   }
+}
+
+function renderAuthStage(stage) {
+  state.authMode = stage;
+  const isSignupStart = stage === "signup";
+  els.authCredentialsFields.hidden = !(stage === "signup" || stage === "login");
+  els.emailVerificationFields.hidden = stage !== "signup-verify";
+  document.querySelectorAll(".signup-only").forEach((node) => {
+    node.hidden = !isSignupStart;
+  });
+  if (els.authPassword) {
+    els.authPassword.autocomplete = isSignupStart ? "new-password" : "current-password";
+  }
+  const titles = {
+    signup: "Sign up",
+    "signup-verify": "Verify email",
+    login: "Log in",
+  };
+  const buttons = {
+    signup: "Send verification code",
+    "signup-verify": "Verify email",
+    login: "Log in",
+  };
+  els.authTitle.textContent = titles[stage] || "Log in";
+  els.authSubmitButton.textContent = buttons[stage] || "Continue";
+}
+
+function authBusyText() {
+  return {
+    signup: "Creating signup session...",
+    "signup-verify": "Verifying email...",
+    login: "Checking credentials...",
+  }[state.authMode] || "Working...";
+}
+
+async function startSignup() {
+  if (els.authPassword.value !== (els.authPasswordConfirm?.value || "")) {
+    throw new Error("Passwords do not match.");
+  }
+  const payload = {
+    username: els.authUsername.value.trim(),
+    email: els.authEmail.value.trim(),
+    password: els.authPassword.value,
+    website: els.authWebsite.value,
+  };
+  const response = await fetch("/auth/signup/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await readJsonResponse(response);
+  state.signupPendingId = data.pending_id;
+  renderAuthStage("signup-verify");
+  els.authStatus.textContent = data.verification_code
+    ? `Verification code: ${data.verification_code}`
+    : "Verification code sent.";
+  els.emailVerificationCode.focus();
+}
+
+async function verifySignupEmail() {
+  const response = await fetch("/auth/signup/verify-email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      pending_id: state.signupPendingId,
+      code: els.emailVerificationCode.value.trim(),
+    }),
+  });
+  await readJsonResponse(response);
+  await completeSignup();
+}
+
+async function completeSignup() {
+  const response = await fetch("/auth/signup/complete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      pending_id: state.signupPendingId,
+    }),
+  });
+  await readJsonResponse(response);
+  closeAuthModal();
+  clearSelectedFile();
+  await loadAccountState();
+  await loadRecentSessions();
+  setStatus("Account created.", "success");
+}
+
+async function startLogin() {
+  const email = els.authEmail.value.trim();
+  const password = els.authPassword.value;
+  if (!email || !password) return;
+  const response = await fetch("/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  await readJsonResponse(response);
+  closeAuthModal();
+  clearSelectedFile();
+  await loadAccountState();
+  await loadRecentSessions();
+  setStatus("Logged in.", "success");
 }
 
 async function logout() {
@@ -573,10 +712,13 @@ function renderSession(session) {
 function renderAccountState(identity) {
   const isAuthenticated = Boolean(identity?.authenticated);
   const tier = identity?.tier || "guest";
+  const username = identity?.username || (isAuthenticated ? "user" : "Guest");
   if (els.accountStatus) {
-    els.accountStatus.textContent = isAuthenticated
-      ? `${identity.email} · ${tier.toUpperCase()}`
-      : "Guest";
+    els.accountStatus.className = `account-status tier-${tierColorClass(tier)}`;
+    els.accountStatus.disabled = false;
+  }
+  if (els.accountName) {
+    els.accountName.textContent = username;
   }
   if (els.loginButton) els.loginButton.hidden = isAuthenticated;
   if (els.signupButton) els.signupButton.hidden = isAuthenticated;
@@ -584,8 +726,12 @@ function renderAccountState(identity) {
 }
 
 function renderRateLimit(rateLimit) {
+  state.rateLimit = rateLimit || null;
   const text = rateLimitText(rateLimit);
   setLimitStatus(text);
+  if (!els.accountModal?.hidden) {
+    renderAccountModalBody();
+  }
 }
 
 function rateLimitText(rateLimit) {
@@ -599,9 +745,81 @@ function rateLimitText(rateLimit) {
   return `OCR uploads: ${remaining}/${limit} remaining this hour.`;
 }
 
+function tierColorClass(tier) {
+  return {
+    guest: "gray",
+    free: "light-blue",
+    pro: "dark-green",
+    owner: "red",
+  }[tier] || "gray";
+}
+
 function setLimitStatus(message) {
-  if (!els.promptLimitStatus) return;
-  els.promptLimitStatus.textContent = message || "";
+  if (!els.uploadLimitStatus) return;
+  els.uploadLimitStatus.textContent = message || "";
+}
+
+async function openAccountModal() {
+  setAccountStatus("");
+  if (state.account?.authenticated) {
+    try {
+      const response = await fetch("/account");
+      const data = await readJsonResponse(response);
+      state.accountDetails = data.account || null;
+    } catch (error) {
+      state.accountDetails = null;
+      setAccountStatus(error.message, "error");
+    }
+  } else {
+    state.accountDetails = null;
+  }
+  renderAccountModalBody();
+  els.accountModal.hidden = false;
+}
+
+function closeAccountModal() {
+  els.accountModal.hidden = true;
+}
+
+function openHelpModal() {
+  els.helpModal.hidden = false;
+}
+
+function closeHelpModal() {
+  els.helpModal.hidden = true;
+}
+
+function renderAccountModalBody() {
+  const identity = state.account || {};
+  const tier = identity.tier || "guest";
+  const username = identity.username || "Guest";
+  const isAuthenticated = Boolean(identity.authenticated);
+  const details = state.accountDetails;
+  const rateLimit = details?.rate_limit || state.rateLimit;
+
+  els.accountPanelUsername.textContent = details?.username || username;
+  els.accountTierChip.className = `account-chip tier-${tierColorClass(tier)}`;
+  els.accountTierChip.textContent = tier.toUpperCase();
+  els.accountEmail.textContent = details?.email || "Sign in to view your account email.";
+  els.accountTierValue.textContent = prettyTierName(details?.tier || tier);
+  els.accountUsage.textContent = rateLimitText(rateLimit) || "OCR uploads: unavailable.";
+  els.accountUpgradeButton.hidden = !isAuthenticated;
+  els.accountDeleteButton.hidden = !isAuthenticated;
+}
+
+function setAccountStatus(message, tone = "") {
+  if (!els.accountStatusMessage) return;
+  els.accountStatusMessage.textContent = message || "";
+  els.accountStatusMessage.className = `state-text${tone ? ` ${tone}` : ""}`;
+}
+
+function prettyTierName(tier) {
+  return {
+    guest: "Guest",
+    free: "Free",
+    pro: "Pro",
+    owner: "Owner",
+  }[tier] || "Unknown";
 }
 
 function renderChatOnlySessionShell() {
