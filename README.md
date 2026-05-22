@@ -36,7 +36,7 @@ Use Docker Compose for the full application:
 docker compose up --build web-app
 ```
 
-Or use the helper script for the GPU stack plus readiness checks:
+Or use the helper script for the single Compose stack plus readiness checks:
 
 ```bash
 ./start_app.sh

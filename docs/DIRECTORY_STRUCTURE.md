@@ -35,7 +35,6 @@ Keep this document brief and update it whenever folders change.
 | `Dockerfile.llm` | Jetson LLM service image recipe. |
 | `Dockerfile.web` | Web-app image recipe. |
 | `docker-compose.yml` | Main local service wiring. |
-| `docker-compose.gpu-test.yml` | GPU-specific Compose overrides used by helper scripts. |
 | `requirements.txt` | Python dependencies for `ocr-service`. |
 | `requirements-llm.txt` | Python dependencies for `llm-service`. |
 | `requirements-web.txt` | Python dependencies for `web-app`. |

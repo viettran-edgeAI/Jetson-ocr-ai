@@ -1,6 +1,7 @@
 third_party/
 .venv/
 .env/
+.env
 .venv-1/
 .vscode/
 __pycache__/

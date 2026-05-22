@@ -24,6 +24,7 @@ Use this file to record design changes, rejected ideas, and why they were replac
 
 | Date | Change | Why |
 | --- | --- | --- |
+| 2026-05-22 | Collapsed the split Compose setup into a single `docker-compose.yml` and removed the GPU override file. | The helper scripts always consumed the override, so keeping a second Compose file only added indirection without providing a separate supported launch mode. |
 | 2026-05-22 | Moved secondary documentation into `docs/` and removed in-repo test/demo fixtures from the main project layout. | The root directory had accumulated documentation drift and disposable assets that were no longer part of the runtime contract. |
 | 2026-05-20 | Added cache-busted static asset URLs at `/`, inline thumbnail delivery, frontend compatibility guards for mixed old/new page shells, and regression tests for those deployment behaviors. | The public hostname briefly served an older browser interface after iterative rebuilds; deployment needed stronger guarantees that previews and UI assets would refresh correctly. |
 | 2026-05-20 | Added a dedicated web-app session/interface design document and condensed the main README into a short project overview. | The browser UI and session orchestration now need their own source-of-truth document instead of living in the top-level summary. |

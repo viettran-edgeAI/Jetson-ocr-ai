@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-COMPOSE_ARGS=(-f docker-compose.yml -f docker-compose.gpu-test.yml)
+COMPOSE_ARGS=(-f docker-compose.yml)
 BUILD_IMAGES=1
 PUBLIC_CHECK=1
 LOCAL_TEST=0

@@ -84,12 +84,12 @@ services:
       LLM_TOP_P: 0.95
       LLM_TOP_K: 40
       LLM_PARALLEL: 1
-      LLM_GPU_LAYERS: 10
-      LLM_DEVICE: CUDA0
-      LLM_FLASH_ATTN: off
-      LLM_FIT: off
+      LLM_GPU_LAYERS: auto
+      LLM_DEVICE: ""
+      LLM_FLASH_ATTN: ""
+      LLM_FIT: "on"
       LLM_KV_OFFLOAD: 1
-      LLM_OP_OFFLOAD: 0
+      LLM_OP_OFFLOAD: 1
       LLM_DISABLE_THINKING: 1
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=5).read()"]
