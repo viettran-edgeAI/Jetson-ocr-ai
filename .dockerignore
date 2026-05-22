@@ -6,6 +6,5 @@
 .vscode
 data
 models
-ocr_img_test
 __pycache__
 *.pyc

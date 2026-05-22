@@ -2,7 +2,7 @@
 
 This document captures the browser interface and the supporting system design for the first `web-app` implementation.
 
-The interface is based on the current mockup:
+The interface is based on the current browser application:
 
 - top header with app name, subtitle, and utility icons
 - large upload and paste area on the left
@@ -85,7 +85,7 @@ The current web app supports signed guest identities, verified local accounts wi
 
 ## Visual System
 
-The screenshot implies a soft, polished application shell. The implementation should follow that direction instead of default admin-dashboard styling.
+The interface should stay soft and technical rather than default admin-dashboard styling.
 
 Recommended visual choices:
 
@@ -96,13 +96,11 @@ Recommended visual choices:
 - subtle iconography
 - restrained motion for state transitions
 
-The UI should feel calm and technical, not busy.
-
 ## System Design
 
 ### Container boundary
 
-The first release should keep three application containers:
+The first release keeps three application containers:
 
 - `web-app`
 - `ocr-service`
@@ -114,7 +112,7 @@ Public traffic should reach only `web-app`.
 
 The fixed public hostname for the application is `jetsonocrai.cc`.
 
-Cloudflare Tunnel should route `https://jetsonocrai.cc` to the local `web-app` origin at `http://localhost:8080`. The tunnel must not route public traffic directly to `ocr-service` or `llm-service`; those services stay internal and are reached only by `web-app` over the Docker network.
+Cloudflare Tunnel routes `https://jetsonocrai.cc` to the local `web-app` origin at `http://localhost:8080`. The tunnel must not route public traffic directly to `ocr-service` or `llm-service`; those services stay internal and are reached only by `web-app` over the Docker network.
 
 Deployment identity:
 
@@ -192,9 +190,9 @@ Because the public entrypoint is `jetsonocrai.cc`, deployment safety must includ
 The web app should:
 
 - send `Cache-Control: no-store, no-cache, must-revalidate, max-age=0` for `/` and `/static/*`
-- emit versioned CSS and JavaScript URLs from `/` so new deployments invalidate older browser shells
+- emit versioned CSS and JavaScript URLs from `/`
 - avoid offline cache layers such as service workers unless they are intentionally designed and tested
-- serve thumbnail/original image responses inline so browser previews work in both the active session and recent sessions
+- serve thumbnail and original image responses inline so browser previews work in both the active session and recent sessions
 
 ## Session Flow
 
@@ -242,7 +240,7 @@ The web app should:
 - Show a concise error message.
 - Preserve the uploaded document and session state when possible.
 - Distinguish upload, OCR, and LLM failures.
-- Avoid frontend hard-failures when a browser tab still holds an older HTML shell during a deployment transition.
+- Avoid frontend hard failures when a browser tab still holds an older HTML shell during a deployment transition.
 
 ## API Shape
 
@@ -258,30 +256,3 @@ The web app itself can expose:
 - `POST /sessions/upload` for file intake
 - `POST /sessions/{id}/ask` for prompt submission
 - `GET /sessions/{id}` for restoring a session
-- `GET /sessions/recent` for the sidebar list
-
-## Implementation Notes
-
-- Use server-rendered HTML or a similarly simple approach for the first version.
-- Keep browser state and server state aligned through session ids.
-- Avoid overbuilding chat features before the upload-to-answer path works.
-- Keep session APIs scoped to the authenticated user or signed guest identity.
-- Apply hourly OCR-upload limits: guest 10, free 50, pro 2000, owner unlimited.
-- Keep the visual hierarchy close to the mockup, especially the upload and output panels.
-
-## Acceptance Criteria
-
-- The UI matches the intended layout and visual balance from the mockup.
-- Sending a prompt without a document creates a chat-only session and triggers an LLM answer.
-- Uploading a PNG, JPG, JPEG, or PDF creates a session or attaches to the active chat-only session and triggers OCR automatically.
-- OCR Markdown renders in the output panel.
-- Successfully OCRed Markdown is appended to the current session context for later chat turns.
-- OCR remains visible after the user asks a question.
-- The OCR result can be copied from the UI.
-- A new upload cannot replace the active session until the user explicitly starts again or removes the current file.
-- The recent sessions list supports multi-select deletion.
-- A prompt submission triggers an LLM answer.
-- Recent sessions persist across reloads.
-- The design works on desktop and mobile.
-- The implementation does not advertise unsupported input types.
-- A fresh deployment does not leave the public hostname serving an older UI shell.

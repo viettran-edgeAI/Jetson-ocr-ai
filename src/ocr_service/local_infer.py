@@ -137,9 +137,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the local Jetson OCR pipeline on images.")
     parser.add_argument(
         "input",
-        nargs="?",
-        default="ocr_img_test",
-        help="Image file or directory to process (default: ocr_img_test).",
+        help="Image file or directory to process.",
     )
     parser.add_argument(
         "--output",

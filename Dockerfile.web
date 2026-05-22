@@ -21,7 +21,7 @@ RUN python -m pip install --upgrade pip setuptools wheel \
 
 COPY src /app/src
 COPY README.md /app/README.md
-COPY WEB_APP_SESSION_INTERFACE_AND_SYSTEM_DESIGN.md /app/WEB_APP_SESSION_INTERFACE_AND_SYSTEM_DESIGN.md
+COPY docs/WEB_APP_SESSION_INTERFACE_AND_SYSTEM_DESIGN.md /app/WEB_APP_SESSION_INTERFACE_AND_SYSTEM_DESIGN.md
 
 RUN mkdir -p /app/data/web_app/uploads /app/data/web_app/ocr_markdown
 

@@ -2,61 +2,47 @@
 
 Local OCR + LLM system for a Jetson Orin Nano Super.
 
-Related docs:
+## Documentation
 
-- [Directory structure](./DIRECTORY_STRUCTURE.md)
-- [Design history](./DESIGN_HISTORY.md)
-- [Web-app session interface and system design](./WEB_APP_SESSION_INTERFACE_AND_SYSTEM_DESIGN.md)
-
-This README is a concise project overview. The detailed browser UI and session design live in the dedicated web-app document.
+- [Directory structure](./docs/DIRECTORY_STRUCTURE.md)
+- [Design history](./docs/DESIGN_HISTORY.md)
+- [Web-app session interface and system design](./docs/WEB_APP_SESSION_INTERFACE_AND_SYSTEM_DESIGN.md)
 
 ## Current status
 
-- `ocr-service` works locally and in the containerized runtime.
-- `llm-service` works with Gemma GGUF, thinking disabled, and an 8096-token context window.
-- The sample QA fixture in `data/ocr_markdown_run_v2/documents/question_0.md` is validated.
-- `web-app` now provides the browser session layer, chat-first prompt flow, automatic OCR attachment into the current session context, OCR preview, persistent recent sessions, cache-busted public assets for `jetsonocrai.cc`, and bulk session selection/deletion.
-- `web-app` supports guest identities plus verified local accounts with username-based account controls, email verification, TOTP two-factor login, user-scoped recent sessions, and hourly OCR-upload rate limits by tier.
+- `ocr-service` runs locally and in Docker.
+- `llm-service` runs with Gemma GGUF, thinking disabled, and an 8096-token context window.
+- `web-app` provides browser sessions, OCR preview, chat, account flows, recent-session persistence, and rate limits by tier.
+- Public deployments target `https://jetsonocrai.cc` through Cloudflare Tunnel.
 
-## System At A Glance
+## Services
 
-- `ocr-service`: image or PDF upload -> coordinate-arranged Markdown
-- `llm-service`: optional OCR Markdown + user request -> concise assistant answer
-- `web-app`: browser UI, session state, chat, upload/OCR attachment, preview, ask flow
+- `src/ocr_service`: internal OCR API on `POST /v1/ocr`
+- `src/llm_service`: internal grounded-answer API on `POST /v1/answer`
+- `src/web_app`: public FastAPI app on port `8080`
 
-## Module Structure
+## Runtime layout
 
-- `src/ocr_service`: internal OCR API on `POST /v1/ocr`.
-- `src/llm_service`: internal grounded answer API on `POST /v1/answer`.
-- `src/web_app`: public FastAPI web app on port `8080`, serving the browser UI and session APIs.
+- `docs/`: project documentation
+- `data/`: runtime uploads, OCR outputs, SQLite state, and other local artifacts
+- `models/`: local OCR and LLM model files
+- `third_party/`: packaged host runtime dependencies such as `llama.cpp` binaries
 
-## Key Decisions
+## Running the stack
 
-- Expose only the web app publicly.
-- Keep OCR and LLM services internal to the container network.
-- Use `jetsonocrai.cc` as the fixed public hostname for the browser application.
-- Use SQLite plus local files for the first session store.
-- Scope sessions to either a registered user or signed guest identity.
-- Apply hourly OCR-upload limits: guest 10, free 50, pro 2000, owner unlimited.
-- Keep Gemma thinking disabled and use an 8096-token context window.
-- Allow chat-only sessions; when a document is later attached and OCR succeeds, append its OCR Markdown to the current session context.
-- Keep OCR artifacts during development, but minimize them in operational mode.
-
-## Running The Web App
-
-Use Docker Compose for the three-container stack:
+Use Docker Compose for the full application:
 
 ```bash
 docker compose up --build web-app
 ```
 
-Or start the full GPU runtime stack plus readiness checks (local APIs + cloudflared + public URL) in one command:
+Or use the helper script for the GPU stack plus readiness checks:
 
 ```bash
 ./start_app.sh
 ```
 
-Optional flags:
+Useful flags:
 
 ```bash
 ./start_app.sh --build
@@ -65,7 +51,7 @@ Optional flags:
 ./start_app.sh --local_test
 ```
 
-Safely shut the stack down:
+Stop the stack:
 
 ```bash
 ./stop_app.sh
@@ -78,10 +64,11 @@ Optional shutdown flags:
 ./stop_app.sh --stop-cloudflared
 ```
 
-Multi-user web-app settings:
+## Environment
+
+Set the main web-app settings in the project-root `.env` file:
 
 ```bash
-# .env (project root)
 WEB_APP_SECRET_KEY=replace-with-at-least-32-random-characters
 WEB_APP_OWNER_EMAIL=your-email@example.com
 WEB_APP_COOKIE_SECURE=1
@@ -90,77 +77,36 @@ WEB_APP_SMTP_USERNAME=mailer@example.com
 WEB_APP_SMTP_PASSWORD=replace-me
 ```
 
-`start_app.sh` loads these values from `.env` automatically. The `--local_test` flag forces `WEB_APP_COOKIE_SECURE=0`; without it, startup forces `WEB_APP_COOKIE_SECURE=1`. `WEB_APP_OWNER_EMAIL` marks the no-limit owner account. Existing single-user sessions are assigned to that owner when the web app starts with this value set.
+`start_app.sh` loads `.env` automatically. `--local_test` forces `WEB_APP_COOKIE_SECURE=0`; otherwise startup forces `WEB_APP_COOKIE_SECURE=1`.
 
-SMTP settings are required for normal signup verification. If SMTP is not configured, signup now fails clearly instead of silently writing verification codes to a local outbox. Set `WEB_APP_AUTH_DEBUG_CODES=1` only for local testing if the browser should display verification codes directly.
+SMTP settings are required for normal signup verification. Set `WEB_APP_AUTH_DEBUG_CODES=1` only for local testing if verification codes should be exposed in the browser.
 
-The local origin is `http://localhost:8080`, but production validation should be done against `https://jetsonocrai.cc`. Public traffic should go to `web-app`; OCR and LLM services are addressed internally by Compose service name.
+## Deployment notes
 
-Cold-start optimization is enabled by default in `ocr-service`:
+- Public traffic should reach only `web-app`.
+- `ocr-service` and `llm-service` remain private Docker services.
+- The web app protects against stale frontend assets by returning `no-store` headers for `/` and `/static/*` and by emitting versioned asset URLs.
 
-- `OCR_PRELOAD_PIPELINE_ON_STARTUP=1`
-- `OCR_WARMUP_ON_STARTUP=1`
+Cloudflare Tunnel details:
 
-This shifts OCR model load and first-pass warmup from the first uploaded file to container startup so first user OCR latency stays close to steady-state behavior.
-
-To reduce GPU-memory startup contention, Compose starts `llm` first and starts `ocr` (with preload/warmup) only after `llm` is healthy.
-
-Cold-start optimization is also enabled by default in `llm-service`:
-
-- `LLM_WARMUP_ON_STARTUP=1`
-
-This sends a tiny warmup request after `llama-server` becomes healthy so the first user chat request is closer to steady-state latency.
-
-## Public Access
-
-The production public hostname is:
-
-```text
-https://jetsonocrai.cc
-```
-
-Cloudflare Tunnel terminates the public hostname and forwards traffic to the local `web-app` at `http://localhost:8080`. The `ocr-service` and `llm-service` remain private Docker services and are not exposed directly to the public internet.
-
-The web app now protects against stale public UI shells by:
-
-- returning `no-store` headers for `/` and `/static/*`
-- emitting versioned CSS and JavaScript URLs from `/`
-- serving uploaded-image preview responses inline from `GET /sessions/{id}/original`
-
-Tunnel details:
-
-- Cloudflare account domain: `jetsonocrai.cc`
-- Cloudflare tunnel name: `jetson-ocr-ai`
-- Cloudflare tunnel id: `a41bac72-717c-401b-a0c3-fa4f4cf2ac60`
-- Public application: `web-app`
+- Domain: `jetsonocrai.cc`
+- Tunnel name: `jetson-ocr-ai`
+- Tunnel id: `a41bac72-717c-401b-a0c3-fa4f4cf2ac60`
 - Local origin: `http://localhost:8080`
 - Installed service config: `/etc/cloudflared/config.yml`
-- User config source: `/home/viettran_orin/.cloudflared/config.yml`
 
-For the GPU-enabled runtime tested on Jetson Orin Nano, start the stack with:
+## Maintenance
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu-test.yml up -d
-```
-
-After a rebuild, verify the public hostname instead of only the local origin:
-
-```bash
-curl -sS https://jetsonocrai.cc/ | head
-curl -sS https://jetsonocrai.cc/sessions/recent
-```
-
-If build or test iterations created dangling Docker artifacts, clean them without taking down the running stack:
+If iterative rebuilds leave dangling Docker artifacts:
 
 ```bash
 docker image prune -f
 docker builder prune -f
 ```
 
-The tunnel service is managed by systemd:
+Cloudflared is managed through systemd:
 
 ```bash
 sudo systemctl status cloudflared
 sudo systemctl restart cloudflared
 ```
-# Jetson-ocr-ai

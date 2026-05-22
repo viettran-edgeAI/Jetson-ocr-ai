@@ -428,9 +428,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "input",
-        nargs="?",
-        default="ocr_img_test",
-        help="Image file or directory to benchmark (default: ocr_img_test).",
+        help="Image file or directory to benchmark.",
     )
     parser.add_argument(
         "--output",

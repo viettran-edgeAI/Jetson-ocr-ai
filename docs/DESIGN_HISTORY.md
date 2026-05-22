@@ -1,6 +1,6 @@
 # Design history
 
-Use this file to record design changes, rejected ideas, and why they were replaced. When a new design is accepted, update the main document in `README.md` and add a short note here.
+Use this file to record design changes, rejected ideas, and why they were replaced. When a new design is accepted, update the main document in `README.md` and the relevant detailed document under `docs/`.
 
 ## Current baseline
 
@@ -24,6 +24,7 @@ Use this file to record design changes, rejected ideas, and why they were replac
 
 | Date | Change | Why |
 | --- | --- | --- |
+| 2026-05-22 | Moved secondary documentation into `docs/` and removed in-repo test/demo fixtures from the main project layout. | The root directory had accumulated documentation drift and disposable assets that were no longer part of the runtime contract. |
 | 2026-05-20 | Added cache-busted static asset URLs at `/`, inline thumbnail delivery, frontend compatibility guards for mixed old/new page shells, and regression tests for those deployment behaviors. | The public hostname briefly served an older browser interface after iterative rebuilds; deployment needed stronger guarantees that previews and UI assets would refresh correctly. |
 | 2026-05-20 | Added a dedicated web-app session/interface design document and condensed the main README into a short project overview. | The browser UI and session orchestration now need their own source-of-truth document instead of living in the top-level summary. |
 | 2026-05-20 | Tuned `llm-service` for OCR QA with explicit Gemma no-thinking flags, container health checks, and unit/smoke tests. The context window later increased to 8096 tokens for chat plus attached OCR context. | The LLM service should answer grounded document requests and normal chat turns without spending tokens on hidden reasoning. |
