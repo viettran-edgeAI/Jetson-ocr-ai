@@ -108,6 +108,24 @@
           </div>
 
           <form class="prompt-form" id="promptForm">
+            <div class="thinking-mode-wrap" id="thinkingModeWrap">
+              <button
+                class="thinking-mode-button"
+                id="thinkingModeButton"
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+              >
+                <span id="thinkingModeLabel">Fast</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m7 10 5 5 5-5" />
+                </svg>
+              </button>
+              <div class="thinking-mode-menu" id="thinkingModeMenu" role="listbox" aria-label="Thinking mode" hidden>
+                <button type="button" role="option" data-thinking-mode="fast" aria-selected="true">Fast</button>
+                <button type="button" role="option" data-thinking-mode="thinking" aria-selected="false">Thinking</button>
+              </div>
+            </div>
             <input id="promptInput" type="text" autocomplete="off" placeholder="Ask anything, or attach a document for OCR context..." />
             <button class="send-button" id="sendButton" type="submit" aria-label="Send prompt" title="Send prompt">
               <svg viewBox="0 0 24 24" aria-hidden="true">

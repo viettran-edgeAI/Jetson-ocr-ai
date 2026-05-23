@@ -4,15 +4,18 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Generator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 
@@ -31,8 +34,11 @@ LLAMA_SERVER_URL = os.environ.get("LLAMA_SERVER_URL", f"http://{LLAMA_HOST}:{LLA
 LLM_HOST = os.environ.get("LLM_HOST", "0.0.0.0")
 LLM_PORT = int(os.environ.get("LLM_PORT", "8081"))
 
-DEFAULT_CTX_SIZE = int(os.environ.get("LLM_CTX_SIZE", "8096"))
+DEFAULT_CTX_SIZE = int(os.environ.get("LLM_CTX_SIZE", "12288"))
 DEFAULT_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "160"))
+DEFAULT_THINKING_MAX_TOKENS = int(
+    os.environ.get("LLM_THINKING_MAX_TOKENS", os.environ.get("LLM_MAX_TOKENS_THINKING", "768"))
+)
 DEFAULT_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
 DEFAULT_TOP_P = float(os.environ.get("LLM_TOP_P", "0.95"))
 DEFAULT_TOP_K = int(os.environ.get("LLM_TOP_K", "40"))
@@ -57,7 +63,7 @@ STARTUP_TIMEOUT_SECONDS = float(os.environ.get("LLM_STARTUP_TIMEOUT_SECONDS", "2
 REQUEST_TIMEOUT_SECONDS = float(os.environ.get("LLM_REQUEST_TIMEOUT_SECONDS", "300"))
 
 MODEL_ALIAS = os.environ.get("LLM_MODEL_ALIAS", "gemma-4-E2B-it-Q4_K_M")
-DISABLE_THINKING = os.environ.get("LLM_DISABLE_THINKING", "1").lower() not in {
+DISABLE_THINKING = os.environ.get("LLM_DISABLE_THINKING", "0").lower() not in {
     "0",
     "false",
     "no",
@@ -86,10 +92,12 @@ class AnswerRequest(BaseModel):
     user_request: str = Field(..., min_length=1)
     conversation_history: list[ConversationMessage] = Field(default_factory=list, max_length=40)
     max_tokens: int | None = Field(default=None, ge=1, le=2048)
+    thinking_mode: Literal["fast", "thinking"] = "fast"
 
 
 class AnswerResponse(BaseModel):
     answer: str
+    reasoning_text: str | None = None
     model: str
     elapsed_ms: int
     prompt_tokens: int | None = None
@@ -158,13 +166,13 @@ async def healthz() -> dict[str, str]:
 async def answer_question(request: AnswerRequest) -> AnswerResponse:
     started = time.perf_counter()
     prepared_ocr = prepare_ocr_markdown(request.ocr_markdown)
-    payload = build_chat_payload(request, prepared_ocr=prepared_ocr)
+    payload = build_chat_payload(request, prepared_ocr=prepared_ocr, stream=False)
     data = await asyncio.to_thread(post_json, "/v1/chat/completions", payload)
     elapsed_ms = int((time.perf_counter() - started) * 1000)
 
     try:
         message = data["choices"][0]["message"]
-        answer_text = str(message.get("content") or "").strip()
+        answer_text, reasoning_text = extract_message_parts(message)
     except (KeyError, IndexError, TypeError) as exc:
         raise HTTPException(status_code=502, detail="Unexpected llama-server response") from exc
 
@@ -174,6 +182,7 @@ async def answer_question(request: AnswerRequest) -> AnswerResponse:
     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
     return AnswerResponse(
         answer=answer_text,
+        reasoning_text=reasoning_text or None,
         model=str(data.get("model") or MODEL_ALIAS),
         elapsed_ms=elapsed_ms,
         prompt_tokens=usage.get("prompt_tokens"),
@@ -181,6 +190,108 @@ async def answer_question(request: AnswerRequest) -> AnswerResponse:
         total_tokens=usage.get("total_tokens"),
         ocr_chars=prepared_ocr["original_chars"],
         ocr_truncated=prepared_ocr["truncated"],
+    )
+
+
+@app.post("/v1/answer/stream")
+async def answer_question_stream(request: AnswerRequest) -> StreamingResponse:
+    started = time.perf_counter()
+    prepared_ocr = prepare_ocr_markdown(request.ocr_markdown)
+    payload = build_chat_payload(request, prepared_ocr=prepared_ocr, stream=True)
+
+    def stream_events() -> Generator[str, None, None]:
+        answer_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        usage: dict[str, Any] = {}
+        timings: dict[str, Any] = {}
+        model_name = MODEL_ALIAS
+        completion_chunks = 0
+        try:
+            for chunk in post_json_stream("/v1/chat/completions", payload):
+                model_name = str(chunk.get("model") or model_name)
+                chunk_usage = chunk.get("usage")
+                if isinstance(chunk_usage, dict):
+                    usage = chunk_usage
+                chunk_timings = chunk.get("timings")
+                if isinstance(chunk_timings, dict):
+                    timings = chunk_timings
+                delta_parts = extract_delta_parts(chunk)
+                reasoning_delta = delta_parts["reasoning"]
+                if reasoning_delta:
+                    reasoning_parts.append(reasoning_delta)
+                    yield sse_event("token", {"delta": reasoning_delta, "kind": "reasoning"})
+                answer_delta = delta_parts["answer"]
+                if answer_delta:
+                    answer_parts.append(answer_delta)
+                    completion_chunks += 1
+                    yield sse_event("token", {"delta": answer_delta, "kind": "answer"})
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else "llama-server stream failed"
+            yield sse_event("error", {"detail": detail})
+            return
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            yield sse_event("error", {"detail": f"llama-server stream failed: {exc}"})
+            return
+
+        answer_text = "".join(answer_parts).strip()
+        reasoning_text = "".join(reasoning_parts).strip()
+        if not answer_text:
+            fallback_payload = dict(payload)
+            fallback_payload["stream"] = False
+            fallback_payload.pop("stream_options", None)
+            try:
+                fallback_data = post_json("/v1/chat/completions", fallback_payload)
+                model_name = str(fallback_data.get("model") or model_name)
+                fallback_usage = fallback_data.get("usage")
+                if isinstance(fallback_usage, dict):
+                    usage = fallback_usage
+                choices = fallback_data.get("choices")
+                if isinstance(choices, list) and choices:
+                    first_choice = choices[0]
+                    if isinstance(first_choice, dict):
+                        message = first_choice.get("message")
+                        if isinstance(message, dict):
+                            answer_text, reasoning_text = extract_message_parts(message)
+            except HTTPException:
+                answer_text = ""
+            if not answer_text:
+                yield sse_event("error", {"detail": "llama-server returned an empty answer"})
+                return
+
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        prompt_tokens = as_int_or_none(usage.get("prompt_tokens"))
+        completion_tokens = as_int_or_none(usage.get("completion_tokens"))
+        total_tokens = as_int_or_none(usage.get("total_tokens"))
+        if completion_tokens is None:
+            completion_tokens = as_int_or_none(timings.get("predicted_n"))
+        if prompt_tokens is None:
+            prompt_tokens = as_int_or_none(timings.get("prompt_n"))
+        if completion_tokens is None and completion_chunks > 0:
+            completion_tokens = completion_chunks
+        if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+            total_tokens = prompt_tokens + completion_tokens
+        yield sse_event(
+            "done",
+            {
+                "answer": answer_text,
+                "reasoning_text": reasoning_text or None,
+                "model": model_name,
+                "elapsed_ms": elapsed_ms,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "ocr_chars": prepared_ocr["original_chars"],
+                "ocr_truncated": prepared_ocr["truncated"],
+            },
+        )
+
+    return StreamingResponse(
+        stream_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -237,11 +348,14 @@ def build_llama_command() -> list[str]:
 def build_chat_payload(
     request: AnswerRequest,
     prepared_ocr: dict[str, Any] | None = None,
+    *,
+    stream: bool = False,
 ) -> dict[str, Any]:
     if prepared_ocr is None:
         prepared_ocr = prepare_ocr_markdown(request.ocr_markdown)
 
     has_ocr_context = bool(prepared_ocr["text"])
+    thinking_enabled = request.thinking_mode == "thinking" and not DISABLE_THINKING
     if has_ocr_context:
         system_prompt = (
             "You are a concise assistant. OCR Markdown from an attached document is "
@@ -251,8 +365,7 @@ def build_chat_payload(
             "\"insufficient evidence in OCR text\". For multiple-choice questions "
             "from the OCR text, give the selected option and a brief reason. Use the "
             "conversation history only to resolve follow-up references within this "
-            "same session. Do not include hidden reasoning, chain-of-thought, or "
-            "<think> text."
+            "same session."
         )
     else:
         system_prompt = (
@@ -260,8 +373,19 @@ def build_chat_payload(
             "this session yet. Answer normal chat requests directly. If the user "
             "asks about an attached document or OCR text, say that no OCR context is "
             "available yet and ask them to attach a document. Use the conversation "
-            "history only to resolve follow-up references within this same session. "
-            "Do not include hidden reasoning, chain-of-thought, or <think> text."
+            "history only to resolve follow-up references within this same session."
+        )
+    if thinking_enabled:
+        system_prompt = (
+            f"{system_prompt} Thinking mode is active. Keep any visible reasoning "
+            "stream concise and user-facing: mention only the key evidence checked, "
+            "the decision point, and the next step. Do not expose hidden "
+            "chain-of-thought or raw <think> tags."
+        )
+    else:
+        system_prompt = (
+            f"{system_prompt} Do not include hidden reasoning, chain-of-thought, "
+            "or <think> text."
         )
     truncation_note = ""
     if prepared_ocr["truncated"]:
@@ -286,14 +410,15 @@ def build_chat_payload(
     payload: dict[str, Any] = {
         "model": MODEL_ALIAS,
         "messages": messages,
-        "max_tokens": request.max_tokens or DEFAULT_MAX_TOKENS,
+        "max_tokens": resolve_max_tokens(request),
         "temperature": DEFAULT_TEMPERATURE,
         "top_p": DEFAULT_TOP_P,
         "top_k": DEFAULT_TOP_K,
-        "stream": False,
+        "stream": stream,
     }
-    if DISABLE_THINKING:
-        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    if stream:
+        payload["stream_options"] = {"include_usage": True}
+    apply_thinking_mode(payload, request.thinking_mode)
     return payload
 
 
@@ -307,8 +432,7 @@ def build_warmup_payload() -> dict[str, Any]:
         "top_k": 1,
         "stream": False,
     }
-    if DISABLE_THINKING:
-        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    apply_thinking_mode(payload, "fast")
     return payload
 
 
@@ -410,6 +534,181 @@ def post_json(path: str, payload: dict[str, Any]) -> dict[str, Any]:
         detail = exc.read().decode("utf-8", errors="replace")
         raise HTTPException(status_code=502, detail=f"llama-server error: {detail}") from exc
     return json.loads(raw)
+
+
+def post_json_stream(path: str, payload: dict[str, Any]) -> Generator[dict[str, Any], None, None]:
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        f"{LLAMA_SERVER_URL}{path}",
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            for data in iter_sse_data_frames(response):
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    decoded = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(decoded, dict):
+                    yield decoded
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise HTTPException(status_code=502, detail=f"llama-server error: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise HTTPException(status_code=502, detail=f"llama-server is unavailable: {exc.reason}") from exc
+
+
+def iter_sse_data_frames(response: Any) -> Generator[str, None, None]:
+    data_lines: list[str] = []
+    for raw_line in response:
+        line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+        if not line:
+            if data_lines:
+                yield "\n".join(data_lines)
+                data_lines = []
+            continue
+        if line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+    if data_lines:
+        yield "\n".join(data_lines)
+
+
+def extract_delta_parts(chunk: dict[str, Any]) -> dict[str, str]:
+    choices = chunk.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return {"answer": "", "reasoning": ""}
+    first = choices[0]
+    if not isinstance(first, dict):
+        return {"answer": "", "reasoning": ""}
+    delta = first.get("delta")
+    if not isinstance(delta, dict):
+        return {"answer": "", "reasoning": ""}
+    return {
+        "answer": normalize_text_content(delta.get("content")),
+        "reasoning": extract_text_from_fields(delta, ("reasoning", "reasoning_content")),
+    }
+
+
+def extract_delta_content(chunk: dict[str, Any]) -> str:
+    parts = extract_delta_parts(chunk)
+    return parts["answer"] or parts["reasoning"]
+
+
+def extract_message_text(message: dict[str, Any]) -> str:
+    return extract_text_from_fields(message, ("content", "reasoning", "reasoning_content"))
+
+
+def extract_message_parts(message: dict[str, Any]) -> tuple[str, str]:
+    answer_text = normalize_text_content(message.get("content")).strip()
+    reasoning_text = extract_text_from_fields(message, ("reasoning", "reasoning_content")).strip()
+    if answer_text:
+        return answer_text, reasoning_text
+    if reasoning_text:
+        split_answer, split_reasoning = split_reasoning_output(reasoning_text)
+        return split_answer, split_reasoning
+    return "", ""
+
+
+def extract_text_from_fields(payload: dict[str, Any], field_order: tuple[str, ...]) -> str:
+    for field in field_order:
+        value = payload.get(field)
+        text = normalize_text_content(value)
+        if text:
+            return text
+    return ""
+
+
+def normalize_text_content(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, list):
+        return ""
+    parts: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            if item:
+                parts.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") in {"text", "output_text", "reasoning", "reasoning_text"}:
+            text = item.get("text")
+            if isinstance(text, str) and text:
+                parts.append(text)
+    return "".join(parts)
+
+
+def split_reasoning_output(text: str) -> tuple[str, str]:
+    cleaned = text.strip()
+    if not cleaned:
+        return "", ""
+
+    think_match = re.search(r"<think>(.*?)</think>(.*)", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    if think_match:
+        reasoning_text = think_match.group(1).strip()
+        answer_text = think_match.group(2).strip()
+        if answer_text:
+            return answer_text, reasoning_text
+
+    labeled_match = re.search(
+        r"(.*?)(?:^|\n)(?:final answer|answer|response|conclusion)\s*:\s*(.+)$",
+        cleaned,
+        flags=re.DOTALL | re.IGNORECASE | re.MULTILINE,
+    )
+    if labeled_match:
+        reasoning_text = labeled_match.group(1).strip()
+        answer_text = labeled_match.group(2).strip()
+        if answer_text:
+            return answer_text, reasoning_text
+
+    numbered_match = re.search(
+        r"(.*(?:^|\n)\d+\.\s+[^\n]+:\s.*?)(\n+[A-Z][\s\S]+)$",
+        cleaned,
+        flags=re.DOTALL | re.MULTILINE,
+    )
+    if numbered_match:
+        reasoning_text = numbered_match.group(1).strip()
+        answer_text = numbered_match.group(2).strip()
+        if answer_text:
+            return answer_text, reasoning_text
+
+    return cleaned, ""
+
+
+def resolve_max_tokens(request: AnswerRequest) -> int:
+    if request.max_tokens is not None:
+        return request.max_tokens
+    if request.thinking_mode == "thinking" and not DISABLE_THINKING:
+        return DEFAULT_THINKING_MAX_TOKENS
+    return DEFAULT_MAX_TOKENS
+
+
+def apply_thinking_mode(payload: dict[str, Any], thinking_mode: str) -> None:
+    if DISABLE_THINKING:
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+        return
+    if thinking_mode == "thinking":
+        payload.pop("chat_template_kwargs", None)
+        return
+    payload["chat_template_kwargs"] = {"enable_thinking": False}
+
+
+def as_int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def sse_event(event: str, payload: dict[str, Any]) -> str:
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event}\ndata: {body}\n\n"
 
 
 def main() -> None:

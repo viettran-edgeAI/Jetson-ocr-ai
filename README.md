@@ -11,7 +11,7 @@ Local OCR + LLM system for a Jetson Orin Nano Super.
 ## Current status
 
 - `ocr-service` runs locally and in Docker.
-- `llm-service` runs with Gemma GGUF, thinking disabled, and an 8096-token context window.
+- `llm-service` runs with Gemma GGUF, opt-in Thinking mode, and a 12288-token context window.
 - `web-app` provides browser sessions, OCR preview, chat, account flows, recent-session persistence, and rate limits by tier.
 - Public deployments target `https://jetsonocrai.cc` through Cloudflare Tunnel.
 

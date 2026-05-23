@@ -1,6 +1,7 @@
 const state = {
   activeSessionId: null,
   activeMode: null,
+  thinkingMode: "fast",
   isBusy: false,
   pendingFile: null,
   pendingPreviewUrl: null,
@@ -37,6 +38,10 @@ const els = {
   copyOcrStatus: document.querySelector("#copyOcrStatus"),
   answerResult: document.querySelector("#answerResult"),
   promptForm: document.querySelector("#promptForm"),
+  thinkingModeWrap: document.querySelector("#thinkingModeWrap"),
+  thinkingModeButton: document.querySelector("#thinkingModeButton"),
+  thinkingModeLabel: document.querySelector("#thinkingModeLabel"),
+  thinkingModeMenu: document.querySelector("#thinkingModeMenu"),
   promptInput: document.querySelector("#promptInput"),
   sendButton: document.querySelector("#sendButton"),
   sessionList: document.querySelector("#sessionList"),
@@ -174,11 +179,32 @@ function bindEvents() {
     if (!event.target.closest(".session-menu-wrap")) {
       closeSessionMenus();
     }
+    if (!event.target.closest(".thinking-mode-wrap")) {
+      closeThinkingModeMenu();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeThinkingModeMenu();
+    }
   });
 
   on(els.promptForm, "submit", (event) => {
     event.preventDefault();
     askQuestion();
+  });
+  on(els.thinkingModeButton, "click", (event) => {
+    event.stopPropagation();
+    toggleThinkingModeMenu();
+  });
+  els.thinkingModeMenu?.querySelectorAll("[data-thinking-mode]").forEach((button) => {
+    on(button, "click", () => {
+      const mode = button.dataset.thinkingMode;
+      if (mode === "fast" || mode === "thinking") {
+        setThinkingMode(mode);
+      }
+      closeThinkingModeMenu();
+    });
   });
 
   document.querySelectorAll(".quick-actions button").forEach((button) => {
@@ -212,6 +238,8 @@ function bindEvents() {
   on(els.accountUpgradeButton, "click", () => setAccountStatus("Account upgrades are not configured yet."));
   on(els.accountDeleteButton, "click", () => setAccountStatus("Account deletion is not configured yet."));
   on(els.helpCloseButton, "click", closeHelpModal);
+
+  setThinkingMode(state.thinkingMode);
 }
 
 function attachFile(file) {
@@ -369,20 +397,77 @@ async function askQuestion(options = {}) {
 
   try {
     await ensureChatSession();
+    const useThinkingTrace = state.thinkingMode === "thinking";
     const optimisticMessages = [
       ...state.currentMessages,
       { role: "user", content: prompt },
-      { role: "assistant", content: "Thinking..." },
+      {
+        role: "assistant",
+        content: "",
+        thinking_trace: useThinkingTrace ? "" : undefined,
+        thinking_in_progress: useThinkingTrace,
+        thinking_open: false,
+      },
     ];
+    const assistantIndex = optimisticMessages.length - 1;
+    let finalSession = null;
     els.emptyOutput.hidden = true;
     renderMessages(optimisticMessages);
-    const response = await fetch(`/sessions/${state.activeSessionId}/ask`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, mode }),
+    const streamUpdater = createStreamingMessageUpdater(optimisticMessages, assistantIndex);
+
+    await streamAskResponse({
+      sessionId: state.activeSessionId,
+      payload: {
+        prompt,
+        mode,
+        thinking_mode: state.thinkingMode,
+      },
+      onToken(delta, kind) {
+        const tokenKind = kind || (useThinkingTrace ? "reasoning" : "answer");
+        if (tokenKind === "reasoning") {
+          if (!useThinkingTrace) {
+            return;
+          }
+          optimisticMessages[assistantIndex].thinking_trace += delta;
+        } else {
+          optimisticMessages[assistantIndex].content += delta;
+        }
+        streamUpdater.queue(tokenKind);
+      },
+      onDone(data) {
+        const answerText = String(data?.answer || "").trim();
+        const reasoningText = String(data?.reasoning_text || optimisticMessages[assistantIndex].thinking_trace || "").trim();
+        optimisticMessages[assistantIndex].thinking_in_progress = false;
+        if (useThinkingTrace && reasoningText) {
+          optimisticMessages[assistantIndex].thinking_trace = reasoningText;
+        }
+        if (answerText) {
+          optimisticMessages[assistantIndex].content = answerText;
+        }
+        optimisticMessages[assistantIndex].elapsed_ms = toFiniteNumberOrUndefined(data?.elapsed_ms);
+        optimisticMessages[assistantIndex].prompt_tokens = toFiniteNumberOrUndefined(data?.prompt_tokens);
+        optimisticMessages[assistantIndex].completion_tokens = toFiniteNumberOrUndefined(data?.completion_tokens);
+        optimisticMessages[assistantIndex].total_tokens = toFiniteNumberOrUndefined(data?.total_tokens);
+        if (data?.session && typeof data.session === "object") {
+          finalSession = data.session;
+        }
+        streamUpdater.flush();
+        renderMessages(optimisticMessages);
+      },
     });
-    const data = await readJsonResponse(response);
-    renderSession(data);
+
+    const finalThinkingTrace = useThinkingTrace
+      ? String(optimisticMessages[assistantIndex].thinking_trace || "").trim()
+      : "";
+    if (finalSession) {
+      decorateSessionWithThinkingTrace(finalSession, finalThinkingTrace);
+      renderSession(finalSession);
+    } else {
+      const response = await fetch(`/sessions/${state.activeSessionId}`);
+      const data = await readJsonResponse(response);
+      decorateSessionWithThinkingTrace(data, finalThinkingTrace);
+      renderSession(data);
+    }
     els.promptInput.value = "";
     state.activeMode = null;
     setQuickActionActive(null);
@@ -844,25 +929,206 @@ function renderMessages(messages) {
 
   els.answerResult.hidden = false;
   els.answerResult.innerHTML = visibleMessages
-    .map((message) => {
+    .map((message, index) => {
       const role = message.role === "user" ? "user" : "assistant";
       const label = role === "user" ? "You" : "Jetson AI";
       const errorClass = message.error ? " is-error" : "";
       const content = role === "user" ? displayUserPrompt(message.content || "") : message.content || "";
       const speed = role === "assistant" ? answerSpeedText(message) : "";
+      const thinkingTrace = role === "assistant" ? String(message.thinking_trace || "").trim() : "";
+      const hasThinkingTrace = Boolean(thinkingTrace);
+      const thinkingInProgress = Boolean(role === "assistant" && message.thinking_in_progress);
+      const showThinkingBox = thinkingInProgress || hasThinkingTrace;
+      const thinkingOpen = Boolean(role === "assistant" && message.thinking_open);
+      const thinkingBox = showThinkingBox
+        ? `
+          <section class="thinking-trace ${thinkingInProgress ? "is-live" : ""} ${thinkingOpen ? "is-open" : ""}" data-thinking-trace>
+            <button
+              type="button"
+              class="thinking-trace-toggle"
+              data-thinking-toggle="${index}"
+              aria-expanded="${thinkingOpen ? "true" : "false"}"
+            >
+              <span class="thinking-trace-label">${thinkingInProgress ? "Thinking..." : "Thinking process"}</span>
+              ${
+                thinkingInProgress
+                  ? `<span class="thinking-dots" aria-hidden="true"><span></span><span></span><span></span></span>`
+                  : `<span class="thinking-trace-state">done</span>`
+              }
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m7 10 5 5 5-5" />
+              </svg>
+            </button>
+            <div class="thinking-trace-panel" data-thinking-panel ${thinkingOpen ? "" : "hidden"}>
+              <div class="thinking-trace-content" data-thinking-content>
+                ${renderThinkingTraceContent(thinkingTrace)}
+              </div>
+            </div>
+          </section>
+        `
+        : "";
       return `
-        <article class="chat-message ${role}${errorClass}">
+        <article class="chat-message ${role}${errorClass}" data-message-index="${index}" data-message-role="${role}">
           <div class="chat-role">${label}</div>
           <div class="chat-bubble">
-            <div class="chat-bubble-content">${renderMarkdown(content)}</div>
-            ${speed ? `<div class="chat-bubble-meta">${escapeHtml(speed)}</div>` : ""}
+            ${thinkingBox}
+            ${
+              role === "assistant"
+                ? `<div class="chat-bubble-content" data-chat-content ${content ? "" : "hidden"}>${content ? renderMarkdown(content) : ""}</div>`
+                : content
+                  ? `<div class="chat-bubble-content">${renderMarkdown(content)}</div>`
+                  : ""
+            }
+            ${speed ? `<div class="chat-bubble-meta" data-chat-meta>${escapeHtml(speed)}</div>` : ""}
           </div>
         </article>
       `;
     })
     .join("");
+  els.answerResult.querySelectorAll("[data-thinking-toggle]").forEach((button) => {
+    on(button, "click", () => {
+      const index = Number(button.dataset.thinkingToggle);
+      if (!Number.isInteger(index) || index < 0 || index >= visibleMessages.length) {
+        return;
+      }
+      const message = visibleMessages[index];
+      if (!message || message.role !== "assistant") {
+        return;
+      }
+      message.thinking_open = !Boolean(message.thinking_open);
+      setThinkingTraceOpen(button, message);
+    });
+  });
   updateOutputPlaceholderVisibility();
   els.outputCard.scrollTop = els.outputCard.scrollHeight;
+}
+
+function createStreamingMessageUpdater(messages, assistantIndex) {
+  const pending = {
+    answer: false,
+    reasoning: false,
+  };
+  let frameQueued = false;
+
+  function apply() {
+    frameQueued = false;
+    const message = messages[assistantIndex];
+    const article = els.answerResult?.querySelector(
+      `[data-message-index="${assistantIndex}"][data-message-role="assistant"]`
+    );
+    if (!message || !article) {
+      pending.answer = false;
+      pending.reasoning = false;
+      return;
+    }
+
+    const shouldStickToBottom = isOutputScrolledNearBottom();
+    if (pending.reasoning) {
+      updateThinkingTraceElement(article, message, { onlyWhenOpen: true });
+    }
+    if (pending.answer) {
+      updateChatContentElement(article, message);
+    }
+    pending.answer = false;
+    pending.reasoning = false;
+
+    if (shouldStickToBottom) {
+      els.outputCard.scrollTop = els.outputCard.scrollHeight;
+    }
+  }
+
+  return {
+    queue(kind) {
+      if (kind === "reasoning") {
+        pending.reasoning = true;
+      } else {
+        pending.answer = true;
+      }
+      if (frameQueued) return;
+      frameQueued = true;
+      const scheduleFrame = window.requestAnimationFrame
+        ? (callback) => window.requestAnimationFrame(callback)
+        : (callback) => window.setTimeout(callback, 16);
+      scheduleFrame(apply);
+    },
+    flush() {
+      apply();
+    },
+  };
+}
+
+function updateChatContentElement(article, message) {
+  const contentEl = article.querySelector("[data-chat-content]");
+  if (!contentEl) return;
+  const content = String(message.content || "");
+  contentEl.hidden = !content;
+  contentEl.innerHTML = content ? renderMarkdown(content) : "";
+}
+
+function updateThinkingTraceElement(article, message, options = {}) {
+  const traceEl = article.querySelector("[data-thinking-trace]");
+  const contentEl = article.querySelector("[data-thinking-content]");
+  const panelEl = article.querySelector("[data-thinking-panel]");
+  if (!traceEl || !contentEl) return;
+  if (options.onlyWhenOpen && panelEl?.hidden) return;
+  traceEl.classList.toggle("is-live", Boolean(message.thinking_in_progress));
+  contentEl.innerHTML = renderThinkingTraceContent(String(message.thinking_trace || "").trim());
+}
+
+function setThinkingTraceOpen(button, message) {
+  const article = button.closest("[data-message-role='assistant']");
+  const traceEl = article?.querySelector("[data-thinking-trace]");
+  const panelEl = article?.querySelector("[data-thinking-panel]");
+  if (!traceEl || !panelEl) return;
+  const isOpen = Boolean(message.thinking_open);
+  traceEl.classList.toggle("is-open", isOpen);
+  panelEl.hidden = !isOpen;
+  button.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  if (isOpen) {
+    updateThinkingTraceElement(article, message);
+  }
+}
+
+function renderThinkingTraceContent(thinkingTrace) {
+  const trace = String(thinkingTrace || "").trim();
+  return trace
+    ? renderMarkdown(trace)
+    : `<p class="thinking-placeholder">Model is preparing the response.</p>`;
+}
+
+function isOutputScrolledNearBottom() {
+  if (!els.outputCard) return true;
+  const distance = els.outputCard.scrollHeight - els.outputCard.scrollTop - els.outputCard.clientHeight;
+  return distance < 80;
+}
+
+function setThinkingMode(mode) {
+  state.thinkingMode = mode === "thinking" ? "thinking" : "fast";
+  if (els.thinkingModeLabel) {
+    els.thinkingModeLabel.textContent = state.thinkingMode === "thinking" ? "Thinking" : "Fast";
+  }
+  els.thinkingModeMenu?.querySelectorAll("[data-thinking-mode]").forEach((button) => {
+    const isActive = button.dataset.thinkingMode === state.thinkingMode;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+}
+
+function toggleThinkingModeMenu() {
+  const menu = els.thinkingModeMenu;
+  const button = els.thinkingModeButton;
+  if (!menu || !button) return;
+  const willOpen = menu.hidden;
+  menu.hidden = !willOpen;
+  button.setAttribute("aria-expanded", willOpen ? "true" : "false");
+}
+
+function closeThinkingModeMenu() {
+  const menu = els.thinkingModeMenu;
+  const button = els.thinkingModeButton;
+  if (!menu || !button) return;
+  menu.hidden = true;
+  button.setAttribute("aria-expanded", "false");
 }
 
 function answerSpeedText(message) {
@@ -1016,6 +1282,12 @@ function setControlsBusy(isBusy) {
     els.startAgainButton.disabled = isBusy;
   }
   els.sendButton.disabled = isBusy;
+  if (els.thinkingModeButton) {
+    els.thinkingModeButton.disabled = isBusy;
+  }
+  els.thinkingModeMenu?.querySelectorAll("button").forEach((button) => {
+    button.disabled = isBusy;
+  });
   els.fileInput.disabled = isBusy;
   if (els.copyOcrButton) {
     els.copyOcrButton.disabled = isBusy;
@@ -1034,12 +1306,130 @@ function setControlsBusy(isBusy) {
   }
 }
 
+async function streamAskResponse({ sessionId, payload, onToken, onDone }) {
+  const response = await fetch(`/sessions/${sessionId}/ask/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorResponse(response));
+  }
+  if (!response.body) {
+    throw new Error("Streaming is not supported in this browser.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let rawBuffer = "";
+  let hasDoneEvent = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    rawBuffer += decoder.decode(value, { stream: true });
+    const frames = splitSseFrames(rawBuffer);
+    rawBuffer = frames.remainder;
+
+    for (const frame of frames.frames) {
+      const parsed = parseSseFrame(frame);
+      if (!parsed) continue;
+      const { event, data } = parsed;
+      if (event === "token") {
+        const delta = String(data?.delta || "");
+        if (delta && typeof onToken === "function") {
+          onToken(delta, String(data?.kind || ""));
+        }
+        continue;
+      }
+      if (event === "done") {
+        hasDoneEvent = true;
+        if (typeof onDone === "function") {
+          onDone(data);
+        }
+        continue;
+      }
+      if (event === "error") {
+        throw new Error(String(data?.detail || "Streaming request failed."));
+      }
+    }
+  }
+
+  if (!hasDoneEvent) {
+    throw new Error("Stream ended before completion.");
+  }
+}
+
+function splitSseFrames(buffer) {
+  const normalized = buffer.replace(/\r\n/g, "\n");
+  const frames = [];
+  let start = 0;
+  while (true) {
+    const idx = normalized.indexOf("\n\n", start);
+    if (idx === -1) break;
+    frames.push(normalized.slice(start, idx));
+    start = idx + 2;
+  }
+  return {
+    frames,
+    remainder: normalized.slice(start),
+  };
+}
+
+function parseSseFrame(frame) {
+  const trimmed = String(frame || "").trim();
+  if (!trimmed) return null;
+  const lines = trimmed.split("\n");
+  let event = "message";
+  const dataLines = [];
+
+  for (const line of lines) {
+    if (!line || line.startsWith(":")) continue;
+    if (line.startsWith("event:")) {
+      event = line.slice(6).trim() || "message";
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trimStart());
+    }
+  }
+
+  if (!dataLines.length) return null;
+  try {
+    return {
+      event,
+      data: JSON.parse(dataLines.join("\n")),
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
 async function readJsonResponse(response) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(data.detail || "Request failed.");
   }
   return data;
+}
+
+async function readErrorResponse(response) {
+  const text = await response.text().catch(() => "");
+  if (!text) return "Request failed.";
+  try {
+    const parsed = JSON.parse(text);
+    return parsed?.detail || text || "Request failed.";
+  } catch (_error) {
+    return text;
+  }
+}
+
+function toFiniteNumberOrUndefined(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function validateFile(file) {
@@ -1323,6 +1713,21 @@ function showOcrContent(html) {
     els.ocrPanel.hidden = false;
   } else {
     els.ocrResult.hidden = false;
+  }
+}
+
+function decorateSessionWithThinkingTrace(session, thinkingTrace) {
+  const trace = String(thinkingTrace || "").trim();
+  if (!trace || !session || !Array.isArray(session.messages)) {
+    return;
+  }
+  for (let idx = session.messages.length - 1; idx >= 0; idx -= 1) {
+    const message = session.messages[idx];
+    if (message?.role !== "assistant") continue;
+    message.thinking_trace = trace;
+    message.thinking_in_progress = false;
+    message.thinking_open = false;
+    break;
   }
 }
 

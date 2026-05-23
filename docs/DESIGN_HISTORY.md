@@ -24,6 +24,7 @@ Use this file to record design changes, rejected ideas, and why they were replac
 
 | Date | Change | Why |
 | --- | --- | --- |
+| 2026-05-23 | Switched LLM thinking from globally disabled to opt-in, raised the default context window to 12288 tokens, and made the browser update streamed thinking traces incrementally. | Thinking mode should be clickable and visibly streaming without freezing the chat UI, while Fast mode should keep the lightweight no-thinking path. |
 | 2026-05-22 | Collapsed the split Compose setup into a single `docker-compose.yml` and removed the GPU override file. | The helper scripts always consumed the override, so keeping a second Compose file only added indirection without providing a separate supported launch mode. |
 | 2026-05-22 | Moved secondary documentation into `docs/` and removed in-repo test/demo fixtures from the main project layout. | The root directory had accumulated documentation drift and disposable assets that were no longer part of the runtime contract. |
 | 2026-05-20 | Added cache-busted static asset URLs at `/`, inline thumbnail delivery, frontend compatibility guards for mixed old/new page shells, and regression tests for those deployment behaviors. | The public hostname briefly served an older browser interface after iterative rebuilds; deployment needed stronger guarantees that previews and UI assets would refresh correctly. |

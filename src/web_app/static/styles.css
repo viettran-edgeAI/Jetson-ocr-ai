@@ -910,6 +910,107 @@ h1 {
   min-width: 0;
 }
 
+.thinking-trace {
+  margin-bottom: 10px;
+  border: 1px dashed #c3cee7;
+  border-radius: 8px;
+  background: rgba(244, 248, 255, 0.92);
+}
+
+.thinking-trace-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  color: #304166;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.thinking-trace-toggle svg {
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+  color: #6173a1;
+  transform: rotate(0deg);
+  transition: transform 140ms ease;
+}
+
+.thinking-trace.is-open .thinking-trace-toggle svg {
+  transform: rotate(180deg);
+}
+
+.thinking-trace-state {
+  color: #6173a1;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.thinking-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: #44547d;
+  animation: thinking-dot-bounce 1s infinite ease-in-out;
+}
+
+.thinking-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.thinking-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes thinking-dot-bounce {
+  0%,
+  80%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+.thinking-trace-panel {
+  padding: 0 10px 10px;
+}
+
+.thinking-trace-content {
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid rgba(144, 158, 192, 0.35);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.88);
+  scrollbar-gutter: stable;
+}
+
+.thinking-trace-content p:last-child {
+  margin-bottom: 0;
+}
+
+.thinking-placeholder {
+  color: #6a7a9f;
+  font-size: 12px;
+  margin: 0;
+}
+
 .chat-bubble-meta {
   margin-top: 8px;
   color: #68799d;
@@ -936,7 +1037,7 @@ h1 {
 
 .prompt-form {
   display: grid;
-  grid-template-columns: 1fr 48px;
+  grid-template-columns: auto 1fr 48px;
   align-items: center;
   gap: 10px;
   margin-top: 24px;
@@ -956,6 +1057,70 @@ h1 {
 
 .prompt-form input::placeholder {
   color: #68769d;
+}
+
+.thinking-mode-wrap {
+  position: relative;
+}
+
+.thinking-mode-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: #293a62;
+  background: rgba(255, 255, 255, 0.88);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.thinking-mode-button:hover {
+  border-color: #b9c2eb;
+  background: #f8faff;
+}
+
+.thinking-mode-button svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.2;
+}
+
+.thinking-mode-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  z-index: 12;
+  display: grid;
+  min-width: 112px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 18px 30px rgba(19, 30, 62, 0.12);
+}
+
+.thinking-mode-menu button {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  color: #22345d;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.thinking-mode-menu button:hover {
+  background: #f1f5ff;
+}
+
+.thinking-mode-menu button.is-active {
+  color: #2b2fc8;
+  background: #e8ecff;
 }
 
 .send-button {
@@ -1303,6 +1468,9 @@ body.dark .session-meta {
 body.dark .drop-zone,
 body.dark .output-card,
 body.dark .prompt-form,
+body.dark .thinking-mode-button,
+body.dark .thinking-mode-menu,
+body.dark .thinking-trace,
 body.dark .quick-actions button,
 body.dark .session-row,
 body.dark .selected-file,
@@ -1328,6 +1496,10 @@ body.dark .prompt-form input {
 body.dark .session-title,
 body.dark .selected-meta strong,
 body.dark .quick-actions button,
+body.dark .thinking-mode-button,
+body.dark .thinking-mode-menu button,
+body.dark .thinking-trace-toggle,
+body.dark .thinking-trace-state,
 body.dark .session-menu button,
 body.dark .chat-bubble,
 body.dark .chat-bubble-meta,
@@ -1355,6 +1527,29 @@ body.dark .copy-button,
 body.dark .start-again-button,
 body.dark .ghost-button {
   background: rgba(22, 32, 54, 0.92);
+}
+
+body.dark .thinking-trace {
+  border-color: #3a4b74;
+  background: rgba(22, 32, 54, 0.9);
+}
+
+body.dark .thinking-trace-content {
+  border-color: #3a4b74;
+  background: rgba(17, 26, 43, 0.92);
+}
+
+body.dark .thinking-dots span {
+  background: #b9c7ec;
+}
+
+body.dark .thinking-placeholder {
+  color: #a7b3cf;
+}
+
+body.dark .thinking-mode-menu button.is-active {
+  color: #d8deff;
+  background: rgba(70, 90, 152, 0.62);
 }
 
 body.dark .session-row.is-selected {
@@ -1450,6 +1645,20 @@ body.dark .chat-message.user .chat-bubble {
 
   .quick-actions {
     grid-template-columns: 1fr;
+  }
+
+  .prompt-form {
+    grid-template-columns: auto 1fr 48px;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .thinking-mode-wrap {
+    min-width: 0;
+  }
+
+  .send-button {
+    justify-self: auto;
   }
 
   .session-row,

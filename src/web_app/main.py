@@ -10,14 +10,15 @@ import secrets
 import smtplib
 import time
 import uuid
+from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib import error, request
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -117,6 +118,7 @@ async def disable_cache_for_ui(request: Request, call_next):
 class AskRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=2000)
     mode: str | None = Field(default=None, max_length=64)
+    thinking_mode: Literal["fast", "thinking"] = "fast"
 
 
 class RenameSessionRequest(BaseModel):
@@ -605,6 +607,7 @@ async def ask_session(
             markdown,
             prompt,
             message_history_for_llm(session.get("messages", [])),
+            ask.thinking_mode,
         )
     except ServiceError as exc:
         store.update_owned_session(
@@ -644,6 +647,153 @@ async def ask_session(
     return serialize_session_detail(updated)
 
 
+@app.post("/sessions/{session_id}/ask/stream")
+async def ask_session_stream(
+    session_id: str,
+    ask: AskRequest,
+    identity: Identity = Depends(current_identity),
+) -> StreamingResponse:
+    identity = coerce_identity(identity)
+    session = get_owned_session_or_404(session_id, identity)
+    if session["status"] not in ASKABLE_STATUSES:
+        raise HTTPException(status_code=409, detail="Session is not ready for chat.")
+
+    markdown = read_session_markdown(session)
+    user_prompt = ask.prompt.strip()
+    prompt = build_prompt(user_prompt, ask.mode, has_ocr=bool(markdown))
+    now = utc_now()
+    history = message_history_for_llm(session.get("messages", []))
+    store.add_message(session_id=session_id, role="user", content=user_prompt, created_at=now)
+    store.update_owned_session(
+        session_id,
+        identity.owner_type,
+        identity.owner_id,
+        now,
+        status="answering",
+    )
+
+    def stream_events() -> Generator[str, None, None]:
+        started = time.perf_counter()
+        answer_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        final_meta: dict[str, Any] = {}
+        try:
+            for event in post_answer_request_stream(markdown, prompt, history, ask.thinking_mode):
+                event_name = str(event.get("event") or "")
+                data = event.get("data")
+                if not isinstance(data, dict):
+                    data = {}
+                if event_name == "token":
+                    delta = str(data.get("delta") or "")
+                    if not delta:
+                        continue
+                    kind = str(data.get("kind") or "answer")
+                    if kind == "reasoning":
+                        reasoning_parts.append(delta)
+                    else:
+                        answer_parts.append(delta)
+                    yield sse_event("token", {"delta": delta, "kind": kind})
+                    continue
+                if event_name == "done":
+                    final_meta = data
+                    break
+                if event_name == "error":
+                    detail = str(data.get("detail") or "LLM service failed.")
+                    raise ServiceError(detail)
+        except ServiceError as exc:
+            store.update_owned_session(
+                session_id,
+                identity.owner_type,
+                identity.owner_id,
+                utc_now(),
+                status="llm_failed",
+                error=str(exc),
+            )
+            yield sse_event("error", {"detail": str(exc)})
+            return
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            detail = f"LLM service failed: {exc}"
+            store.update_owned_session(
+                session_id,
+                identity.owner_type,
+                identity.owner_id,
+                utc_now(),
+                status="llm_failed",
+                error=detail,
+            )
+            yield sse_event("error", {"detail": detail})
+            return
+
+        answer_text = str(final_meta.get("answer") or "").strip()
+        if not answer_text:
+            answer_text = "".join(answer_parts).strip()
+        if not answer_text:
+            detail = "LLM service returned an empty answer."
+            store.update_owned_session(
+                session_id,
+                identity.owner_type,
+                identity.owner_id,
+                utc_now(),
+                status="llm_failed",
+                error=detail,
+            )
+            yield sse_event("error", {"detail": detail})
+            return
+
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        answer_elapsed_ms = as_int(final_meta.get("elapsed_ms"), fallback=elapsed_ms)
+        prompt_tokens = as_int_or_none(final_meta.get("prompt_tokens"))
+        completion_tokens = as_int_or_none(final_meta.get("completion_tokens"))
+        total_tokens = as_int_or_none(final_meta.get("total_tokens"))
+
+        store.add_message(
+            session_id=session_id,
+            role="assistant",
+            content=answer_text,
+            elapsed_ms=answer_elapsed_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            created_at=utc_now(),
+        )
+        store.update_owned_session(
+            session_id,
+            identity.owner_type,
+            identity.owner_id,
+            utc_now(),
+            status="answered",
+            error=None,
+            answer_elapsed_ms=elapsed_ms,
+        )
+        updated = store.get_session(session_id, owner_type=identity.owner_type, owner_id=identity.owner_id)
+        if updated is None:
+            detail = "Session vanished after answer."
+            yield sse_event("error", {"detail": detail})
+            return
+
+        payload = {
+            "answer": answer_text,
+            "reasoning_text": str(final_meta.get("reasoning_text") or "").strip()
+            or "".join(reasoning_parts).strip()
+            or None,
+            "elapsed_ms": answer_elapsed_ms,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "session": serialize_session_detail(updated),
+        }
+        yield sse_event("done", payload)
+
+    return StreamingResponse(
+        stream_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 class ServiceError(RuntimeError):
     pass
 
@@ -677,8 +827,13 @@ def post_answer_request(
     markdown: str,
     prompt: str,
     conversation_history: list[dict[str, str]] | None = None,
+    thinking_mode: Literal["fast", "thinking"] = "fast",
 ) -> dict[str, Any]:
-    request_body: dict[str, Any] = {"ocr_markdown": markdown, "user_request": prompt}
+    request_body: dict[str, Any] = {
+        "ocr_markdown": markdown,
+        "user_request": prompt,
+        "thinking_mode": thinking_mode,
+    }
     if conversation_history:
         request_body["conversation_history"] = conversation_history
     payload = json.dumps(request_body).encode("utf-8")
@@ -696,6 +851,91 @@ def post_answer_request(
         raise ServiceError(f"LLM service failed: {detail}") from exc
     except error.URLError as exc:
         raise ServiceError(f"LLM service is unavailable: {exc.reason}") from exc
+
+
+def post_answer_request_stream(
+    markdown: str,
+    prompt: str,
+    conversation_history: list[dict[str, str]] | None = None,
+    thinking_mode: Literal["fast", "thinking"] = "fast",
+) -> Generator[dict[str, Any], None, None]:
+    request_body: dict[str, Any] = {
+        "ocr_markdown": markdown,
+        "user_request": prompt,
+        "thinking_mode": thinking_mode,
+    }
+    if conversation_history:
+        request_body["conversation_history"] = conversation_history
+    payload = json.dumps(request_body).encode("utf-8")
+    req = request.Request(
+        f"{LLM_SERVICE_URL.rstrip('/')}/v1/answer/stream",
+        data=payload,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        },
+    )
+    try:
+        with request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            for frame in iter_sse_frames(response):
+                event_name = str(frame.get("event") or "").strip() or "message"
+                data_blob = frame.get("data")
+                if not isinstance(data_blob, str) or not data_blob:
+                    continue
+                try:
+                    decoded = json.loads(data_blob)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(decoded, dict):
+                    continue
+                yield {"event": event_name, "data": decoded}
+    except error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise ServiceError(f"LLM service failed: {detail}") from exc
+    except error.URLError as exc:
+        raise ServiceError(f"LLM service is unavailable: {exc.reason}") from exc
+
+
+def iter_sse_frames(response: Any) -> Generator[dict[str, str], None, None]:
+    event_name = "message"
+    data_lines: list[str] = []
+    for raw_line in response:
+        line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+        if not line:
+            if data_lines:
+                yield {"event": event_name, "data": "\n".join(data_lines)}
+            event_name = "message"
+            data_lines = []
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("event:"):
+            event_name = line[6:].strip() or "message"
+            continue
+        if line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+    if data_lines:
+        yield {"event": event_name, "data": "\n".join(data_lines)}
+
+
+def sse_event(event_name: str, payload: dict[str, Any]) -> str:
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event_name}\ndata: {body}\n\n"
+
+
+def as_int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def as_int(value: Any, *, fallback: int) -> int:
+    parsed = as_int_or_none(value)
+    return parsed if parsed is not None else fallback
 
 
 def message_history_for_llm(messages: list[dict[str, Any]]) -> list[dict[str, str]]:

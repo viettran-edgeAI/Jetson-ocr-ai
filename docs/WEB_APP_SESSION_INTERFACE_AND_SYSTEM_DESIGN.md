@@ -232,6 +232,7 @@ The web app should:
 
 - Keep the prompt area active.
 - Show a loading indicator while the LLM request is in flight.
+- If the user selected Thinking mode, show a collapsible thinking panel immediately and stream concise reasoning updates into it without blocking animation or click handling.
 - Preserve the OCR output while the answer is generated.
 - Warm the LLM path on service startup so the first chat response is not substantially slower than later responses.
 

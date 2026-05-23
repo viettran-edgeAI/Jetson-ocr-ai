@@ -77,9 +77,11 @@ services:
       LLM_MODEL_PATH: /app/models/llm/gemma-4-E2B-it-Q4_K_M.gguf
       LLAMA_SERVER_BIN: /opt/llama.cpp/build/bin/llama-server
       LD_LIBRARY_PATH: /opt/llama.cpp/build/bin:/usr/local/cuda/lib64:/usr/lib/aarch64-linux-gnu/nvidia
-      LLM_CTX_SIZE: 8096
+      LLM_CTX_SIZE: 12288
       LLM_MAX_OCR_CHARS: 12000
       LLM_MAX_TOKENS: 160
+      LLM_THINKING_MAX_TOKENS: 768
+      LLM_DISABLE_THINKING: 0
       LLM_TEMPERATURE: 0.2
       LLM_TOP_P: 0.95
       LLM_TOP_K: 40
@@ -90,7 +92,6 @@ services:
       LLM_FIT: "on"
       LLM_KV_OFFLOAD: 1
       LLM_OP_OFFLOAD: 1
-      LLM_DISABLE_THINKING: 1
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=5).read()"]
       interval: 30s
