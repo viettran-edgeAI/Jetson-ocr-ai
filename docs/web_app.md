@@ -1,4 +1,4 @@
-# Web-App Session Interface And System Design
+# Web App
 
 This document captures the browser interface and the supporting system design for the first `web-app` implementation.
 

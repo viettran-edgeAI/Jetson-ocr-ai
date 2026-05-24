@@ -5,7 +5,10 @@ Keep this document brief and update it whenever folders change.
 | Path | Purpose |
 | --- | --- |
 | `/` | Project root for runtime entrypoints, Docker files, and the top-level README. |
-| `docs/` | Project documentation, including structure notes, design history, and the web-app design spec. |
+| `docs/` | Project documentation, including structure notes, design history, and service/interface docs. |
+| `docs/ocr_service.md` | OCR service architecture, API, and pipeline document. |
+| `docs/llm_service.md` | LLM service architecture, API, and prompt contract document. |
+| `docs/web_app.md` | Web-app session interface and system design document. |
 | `data/` | Runtime uploads, OCR outputs, SQLite state, and other local artifacts generated during development or app usage. |
 | `data/web_app/` | Web-app runtime data, including uploads, OCR Markdown artifacts, auth outbox, and the session database. |
 | `models/` | Local OCR and LLM model snapshots and metadata. |
