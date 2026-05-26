@@ -2,4 +2,7 @@ fastapi==0.115.11
 python-multipart==0.0.20
 uvicorn[standard]==0.34.0
 paddleocr==3.5.0
+paddlex[ocr]==3.5.2
 pillow==12.2.0
+numpy==2.2.6
+pypdfium2==4.30.0

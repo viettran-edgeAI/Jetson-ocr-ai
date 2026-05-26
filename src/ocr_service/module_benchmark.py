@@ -22,7 +22,9 @@ from paddleocr._models.textline_orientation_classification import (
 )
 from paddlex.inference.pipelines.components import CropByPolys, SortQuadBoxes, rotate_image
 
-from .pipeline import _default_model_dir, _env_int, _env_str
+from .config import default_model_dir as _default_model_dir
+from .config import env_int as _env_int
+from .config import env_str as _env_str
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}

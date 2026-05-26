@@ -6,11 +6,12 @@ Local OCR + LLM system for a Jetson Orin Nano Super.
 
 - [Directory structure](./docs/DIRECTORY_STRUCTURE.md)
 - [Design history](./docs/DESIGN_HISTORY.md)
-- [Web-app session interface and system design](./docs/WEB_APP_SESSION_INTERFACE_AND_SYSTEM_DESIGN.md)
+- [Web-app session interface and system design](./docs/web_app.md)
 
 ## Current status
 
 - `ocr-service` runs locally and in Docker.
+- `ocr-service` now uses the replacement Jetson OCR pipeline internally while preserving the existing `POST /v1/ocr` Markdown contract for `web-app`.
 - `llm-service` runs with Gemma GGUF, opt-in Thinking mode, and a 12288-token context window.
 - `web-app` provides browser sessions, OCR preview, chat, account flows, recent-session persistence, and rate limits by tier.
 - Public deployments target `https://jetsonocrai.cc` through Cloudflare Tunnel.

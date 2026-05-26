@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 from pathlib import Path
 from typing import Iterable
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .pipeline import OCRPipeline, OCRResult, _default_model_dir
+from .config import default_model_dir as _default_model_dir
+from .models import OCRResult
+from .pipeline import OCRPipeline
 
 
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp", ".pdf"}
@@ -172,9 +175,23 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Override OCR_TEXTLINE_ORI_BATCH_SIZE for this run.",
     )
+    parser.add_argument(
+        "--formula-recognition-batch-size",
+        type=int,
+        default=None,
+        help="Override OCR_FORMULA_RECOGNITION_BATCH_SIZE for this run.",
+    )
     parser.add_argument("--device", default=None, help="Override OCR_DEVICE for this run.")
     parser.add_argument("--det-model-dir", default=None, help="Override OCR_DET_MODEL_DIR for this run.")
     parser.add_argument("--rec-model-dir", default=None, help="Override OCR_REC_MODEL_DIR for this run.")
+    parser.add_argument("--layout-model-dir", default=None, help="Override OCR_LAYOUT_MODEL_DIR for this run.")
+    parser.add_argument("--region-model-dir", default=None, help="Override OCR_REGION_MODEL_DIR for this run.")
+    parser.add_argument("--formula-model-dir", default=None, help="Override OCR_FORMULA_MODEL_DIR for this run.")
+    parser.add_argument(
+        "--use-document-structure",
+        action="store_true",
+        help="Enable the PP-StructureV3 layout, optional region, formula, masking, and merge path.",
+    )
     parser.add_argument(
         "--use-tensorrt",
         action="store_true",
@@ -216,24 +233,34 @@ def main() -> None:
         model_dirs = [
             Path(args.det_model_dir).expanduser().resolve()
             if args.det_model_dir
-            else _default_model_dir("PP-OCRv5_mobile_det"),
+            else _default_model_dir("PP-OCRv5_mobile_det_infer"),
             Path(args.rec_model_dir).expanduser().resolve()
             if args.rec_model_dir
-            else _default_model_dir("PP-OCRv5_mobile_rec"),
+            else _default_model_dir("PP-OCRv5_mobile_rec_infer"),
             _default_model_dir("PP-LCNet_x0_25_textline_ori_infer"),
             _default_model_dir("PP-LCNet_x1_0_doc_ori_infer"),
             _default_model_dir("UVDoc_infer"),
+            _default_model_dir("PP-DocLayout_plus-L_infer"),
+            _default_model_dir("PP-DocBlockLayout_infer"),
+            _default_model_dir("PP-FormulaNet_plus-S_infer"),
         ]
         _clear_tensorrt_caches(model_dirs)
+
+    if args.use_document_structure:
+        os.environ["OCR_USE_DOCUMENT_STRUCTURE"] = "1"
 
     pipeline = OCRPipeline(
         det_model_dir=args.det_model_dir,
         rec_model_dir=args.rec_model_dir,
         device=args.device,
+        layout_detection_model_dir=args.layout_model_dir,
+        region_detection_model_dir=args.region_model_dir,
+        formula_recognition_model_dir=args.formula_model_dir,
         profile=args.profile,
         engine=args.engine,
         text_recognition_batch_size=args.text_recognition_batch_size,
         textline_orientation_batch_size=args.textline_orientation_batch_size,
+        formula_recognition_batch_size=args.formula_recognition_batch_size,
         use_tensorrt=args.use_tensorrt or None,
         trt_profile=args.trt_profile,
         trt_modules=trt_modules,

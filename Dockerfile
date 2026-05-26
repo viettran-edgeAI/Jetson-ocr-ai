@@ -12,14 +12,26 @@ ENV DEBIAN_FRONTEND=noninteractive \
     OCR_DOC_ORI_MODEL_DIR=/app/models/PP-LCNet_x1_0_doc_ori_infer \
     OCR_DOC_UNWARP_MODEL_DIR=/app/models/UVDoc_infer \
     OCR_TEXTLINE_ORI_MODEL_DIR=/app/models/PP-LCNet_x0_25_textline_ori_infer \
-    OCR_DET_MODEL_DIR=/app/models/PP-OCRv5_mobile_det \
-    OCR_REC_MODEL_DIR=/app/models/PP-OCRv5_mobile_rec \
+    OCR_DET_MODEL_DIR=/app/models/PP-OCRv5_mobile_det_infer \
+    OCR_REC_MODEL_DIR=/app/models/PP-OCRv5_mobile_rec_infer \
+    OCR_LAYOUT_MODEL_DIR=/app/models/PP-DocLayout_plus-L_infer \
+    OCR_REGION_MODEL_DIR=/app/models/PP-DocBlockLayout_infer \
+    OCR_FORMULA_MODEL_DIR=/app/models/PP-FormulaNet_plus-S_infer \
+    OCR_USE_DOCUMENT_STRUCTURE=1 \
     OCR_TEXT_RECOGNITION_BATCH_SIZE=4 \
     OCR_DATA_DIR=/app/data
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
+        libglib2.0-0 \
+        libgl1 \
+        libgomp1 \
+        libjpeg-turbo8 \
+        libopenblas0-pthread \
+        libsm6 \
+        libxext6 \
+        libxrender1 \
         python3 \
         python3-dev \
         python3-pip \

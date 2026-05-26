@@ -12,18 +12,25 @@ Keep this document brief and update it whenever folders change.
 | `data/` | Runtime uploads, OCR outputs, SQLite state, and other local artifacts generated during development or app usage. |
 | `data/web_app/` | Web-app runtime data, including uploads, OCR Markdown artifacts, auth outbox, and the session database. |
 | `models/` | Local OCR and LLM model snapshots and metadata. |
-| `models/PP-OCRv5_mobile_det/` | PP-OCRv5 text detection files. |
-| `models/PP-OCRv5_mobile_rec/` | PP-OCRv5 text recognition files. |
+| `models/PP-OCRv5_mobile_det_infer/` | PP-OCRv5 text detection files for the replacement OCR pipeline. |
+| `models/PP-OCRv5_mobile_rec_infer/` | PP-OCRv5 text recognition files for the replacement OCR pipeline. |
 | `models/PP-LCNet_x0_25_textline_ori_infer/` | PP-LCNet text line orientation files. |
 | `models/PP-LCNet_x1_0_doc_ori_infer/` | PP-LCNet document orientation files. |
 | `models/UVDoc_infer/` | UVDoc document layout analysis files. |
+| `models/PP-DocLayout_plus-L_infer/` | Layout detection files used by the replacement OCR pipeline. |
+| `models/PP-DocBlockLayout_infer/` | Region/block detection files used by the replacement OCR pipeline. |
+| `models/PP-FormulaNet_plus-S_infer/` | Formula recognition files used by the replacement OCR pipeline. |
 | `models/llm/` | Local GGUF model storage for `llm-service`. |
 | `wheels/` | Jetson-compatible PaddlePaddle wheel storage and notes. |
 | `third_party/` | Packaged third-party runtime dependencies bundled into images. |
 | `third_party/llama-bin/bin/` | Validated host `llama.cpp` runtime artifacts copied into `Dockerfile.llm`. |
+| `docker/` | Additional Docker build packages and alternate image definitions. |
+| `docker/paddleocr-l4t-base/` | Minimal OCR image package based on `l4t-base` plus the PaddleOCR runtime. |
 | `src/` | Application source code. |
 | `src/ocr_service/` | OCR pipeline and internal OCR API service. |
-| `src/ocr_service/pipeline.py` | High-level PP-OCRv5 pipeline wrapper that uses the local OCR models. |
+| `src/ocr_service/pipeline.py` | Document-level OCR wrapper for image/PDF loading, OCR stages, and Markdown assembly. |
+| `src/ocr_service/paddle_adapter.py` | Lazy PaddleOCR module loader for the replacement OCR pipeline. |
+| `src/ocr_service/image_ops.py` | Shared image and geometry helpers for the OCR pipeline. |
 | `src/ocr_service/local_infer.py` | Local OCR runner for explicit image or PDF inputs. |
 | `src/ocr_service/module_benchmark.py` | Local benchmark runner for the OCR component models. |
 | `src/ocr_service/main.py` | FastAPI app for upload-and-read OCR requests. |

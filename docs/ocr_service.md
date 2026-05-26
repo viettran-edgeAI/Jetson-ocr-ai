@@ -4,7 +4,9 @@ This document describes the internal OCR service in `src/ocr_service/`: what it 
 
 ## Purpose
 
-`ocr-service` is the private OCR backend for the Jetson stack. It accepts a single uploaded document, runs PaddleOCR-based inference locally, converts the result into Markdown, and returns that Markdown to the caller.
+`ocr-service` is the private OCR backend for the Jetson stack. It accepts a single uploaded image or PDF, runs the replacement Jetson OCR pipeline locally, converts the result into Markdown, and returns that Markdown to the caller.
+
+The current implementation keeps the existing `POST /v1/ocr` contract used by `web-app`, but the internals now follow the newer document pipeline from `models/new_ocr_pipeline.md`: image/PDF page loading, optional document orientation and unwarping, layout detection, optional region detection, formula recognition, formula masking, general text OCR, reading-order merge, and Markdown assembly.
 
 It is designed to be used by `web-app` over the internal Docker network, not directly from the public internet.
 
@@ -30,17 +32,32 @@ Runtime directories created on startup:
 
 ### `src/ocr_service/pipeline.py`
 
-Core OCR implementation.
+OCR orchestration layer.
 
-This file defines:
+This file coordinates:
 
-- the OCR result data model
-- PaddleOCR pipeline configuration
-- document parsing and post-processing
-- line filtering and duplicate suppression
-- block reconstruction
-- Markdown rendering
-- structured document payload assembly
+- image and PDF page loading
+- optional document orientation classification and unwarping
+- layout detection and region detection
+- formula recognition plus formula masking before re-running text OCR
+- text detection, optional textline orientation, and text recognition
+- reading-order merge and document-level Markdown assembly
+
+### `src/ocr_service/config.py`
+
+Environment-driven runtime configuration for model directories, module toggles, batching, TensorRT flags, and document-structure behavior.
+
+### `src/ocr_service/paddle_adapter.py`
+
+Lazy loader for the individual PaddleOCR runtime modules used by the replacement pipeline.
+
+### `src/ocr_service/image_ops.py`
+
+Small image and geometry helpers shared by the replacement pipeline.
+
+### `src/ocr_service/models.py`
+
+Structured result dataclasses for pages, lines, reconstructed blocks, detected layout/region boxes, and formulas.
 
 ### `src/ocr_service/local_infer.py`
 
@@ -75,8 +92,11 @@ The pipeline loads local PaddleOCR model snapshots from `models/` by default:
 - `models/PP-LCNet_x1_0_doc_ori_infer/`
 - `models/UVDoc_infer/`
 - `models/PP-LCNet_x0_25_textline_ori_infer/`
-- `models/PP-OCRv5_mobile_det/`
-- `models/PP-OCRv5_mobile_rec/`
+- `models/PP-OCRv5_mobile_det_infer/`
+- `models/PP-OCRv5_mobile_rec_infer/`
+- `models/PP-DocLayout_plus-L_infer/`
+- `models/PP-DocBlockLayout_infer/`
+- `models/PP-FormulaNet_plus-S_infer/`
 
 These can be overridden with environment variables:
 
@@ -85,6 +105,9 @@ These can be overridden with environment variables:
 - `OCR_TEXTLINE_ORI_MODEL_DIR`
 - `OCR_DET_MODEL_DIR`
 - `OCR_REC_MODEL_DIR`
+- `OCR_LAYOUT_MODEL_DIR`
+- `OCR_REGION_MODEL_DIR`
+- `OCR_FORMULA_MODEL_DIR`
 
 ## API Surface
 
@@ -129,14 +152,38 @@ The endpoint also copies the original upload to `data/uploads/` and writes the M
 The main runtime path is:
 
 1. Resolve the uploaded path and verify that it exists.
-2. Load image size metadata when applicable.
-3. Call PaddleOCR through `self._ocr.predict(str(image_path))`.
-4. Extract one or more page payloads from the PaddleOCR response.
-5. Convert each page payload into line objects.
-6. Apply line filters and warnings.
-7. Reconstruct layout rows into blocks.
-8. Convert the page to fenced Markdown.
-9. Combine pages into document-level Markdown.
+2. Load one RGB page for an image input, or rasterize every PDF page.
+3. Run dark-background normalization.
+4. Run general text OCR once to establish text presence.
+5. Optionally run document orientation classification and unwarping.
+6. Optionally run layout detection and region detection.
+7. Run formula recognition for layout regions labeled as formulas.
+8. Mask recognized formula regions and re-run general text OCR when formulas were found.
+9. Sort text and formula items into reading order and attach region IDs where available.
+10. Convert merged items into `OCRResult` page objects.
+11. Combine page Markdown into a final document Markdown response.
+
+### Document-structure stages
+
+Enable the structure-aware path from `models/new_ocr_pipeline.md` with:
+
+```bash
+OCR_USE_DOCUMENT_STRUCTURE=1
+```
+
+Optional per-stage flags default to the document-structure setting:
+
+- `OCR_USE_LAYOUT_DETECTION`
+- `OCR_USE_REGION_DETECTION`
+- `OCR_USE_FORMULA_RECOGNITION`
+
+Other controls:
+
+- `OCR_LAYOUT_MODEL_NAME`
+- `OCR_REGION_MODEL_NAME`
+- `OCR_FORMULA_MODEL_NAME`
+- `OCR_FORMULA_RECOGNITION_BATCH_SIZE`
+- `OCR_STRUCTURED_MARKDOWN_MODE` (`prefer` by default)
 
 ### Optional preprocessing stages
 
@@ -146,7 +193,7 @@ The pipeline can enable or disable these stages:
 - document image unwarping
 - textline orientation classification
 
-The default profile is `fast`, which disables the optional stages unless environment flags override them. The `full` profile enables them by default.
+The default profile is `fast`, which leaves the optional preprocessing stages off unless environment flags override them. The `full` profile enables them by default.
 
 ### TensorRT and acceleration
 
@@ -179,6 +226,8 @@ Relevant environment variables include:
 - `markdown_text`
 - `lines`
 - `blocks`
+- `regions`
+- `formulas`
 - `warnings`
 - `timings_ms`
 - `meta`
@@ -316,6 +365,8 @@ Important nested fields:
 - `pages`: list of per-page `OCRResult.to_dict()` objects
 - `lines`: flattened line list across pages
 - `blocks`: flattened block list across pages
+- `regions`: flattened layout/region detections across pages
+- `formulas`: flattened recognized formulas across pages
 - `warnings`: flattened warning list across pages
 - `timings_ms.document_total`: sum of per-page totals
 - `timings_ms.page_count`: number of pages
@@ -329,6 +380,7 @@ Per page, `timings_ms` contains:
 
 - `preprocess`
 - `pipeline`
+- `structure`
 - `postprocess`
 - `total`
 
@@ -373,6 +425,11 @@ Useful CLI options include:
 - `--profile`
 - `--engine`
 - `--device`
+- `--layout-model-dir`
+- `--region-model-dir`
+- `--formula-model-dir`
+- `--formula-recognition-batch-size`
+- `--use-document-structure`
 - `--use-tensorrt`
 - `--trt-profile`
 - `--trt-modules`
