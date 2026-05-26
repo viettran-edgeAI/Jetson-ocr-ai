@@ -482,6 +482,9 @@ h1 {
   margin-top: 22px;
   padding: 22px 24px 24px;
   border-radius: var(--radius);
+  position: relative;
+  z-index: 6;
+  overflow: visible;
 }
 
 .panel h2,
@@ -723,6 +726,11 @@ h1 {
     linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(247, 250, 255, 0.72));
 }
 
+.output-panel {
+  position: relative;
+  z-index: 4;
+}
+
 .empty-output {
   display: grid;
   place-items: center;
@@ -862,6 +870,15 @@ h1 {
   padding: 0;
   background: transparent;
   font-size: inherit;
+}
+
+.math-block {
+  overflow-x: auto;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(250, 252, 255, 0.92);
 }
 
 .ocr-result hr,
@@ -1039,9 +1056,9 @@ h1 {
   display: grid;
   grid-template-columns: auto 1fr 48px;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   margin-top: 24px;
-  padding: 8px 8px 8px 17px;
+  padding: 8px 10px 8px 15px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: #fff;
@@ -1147,9 +1164,12 @@ h1 {
   grid-template-columns: 1fr 1fr;
   gap: 16px;
   margin-top: 20px;
+  position: relative;
+  overflow: visible;
 }
 
-.quick-actions button {
+.quick-actions > button,
+.quick-action-translate {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1162,12 +1182,14 @@ h1 {
   font-weight: 800;
 }
 
-.quick-actions button:hover {
+.quick-actions > button:hover,
+.quick-action-translate:hover {
   border-color: #b9c2eb;
   background: #fbfcff;
 }
 
-.quick-actions button.is-active {
+.quick-actions > button.is-active,
+.quick-action-translate.is-active {
   border-color: #4d37df;
   background: #eef0ff;
 }
@@ -1178,7 +1200,94 @@ h1 {
   color: var(--accent);
 }
 
+.quick-action-translate {
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px 0 14px;
+  position: relative;
+  z-index: 8;
+}
+
+.quick-action-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 auto;
+  justify-content: flex-start;
+  min-height: 48px;
+  padding: 0 8px 0 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font-weight: inherit;
+}
+
+.quick-action-language {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.quick-action-language-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: #1d2d59;
+  background: rgba(255, 255, 255, 0.9);
+  font-weight: 700;
+}
+
+.quick-action-language-button:hover {
+  border-color: #aebae8;
+  background: #ffffff;
+}
+
+.quick-action-language-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.quick-action-language-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  min-width: 190px;
+  max-height: 132px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  box-shadow: var(--shadow);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.quick-action-language-menu button {
+  justify-content: flex-start;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  color: #172243;
+  background: transparent;
+  font-weight: 700;
+}
+
+.quick-action-language-menu button:hover,
+.quick-action-language-menu button.is-active {
+  background: #eef0ff;
+}
+
 .recent-shell {
+  position: relative;
+  z-index: 1;
   margin-top: 22px;
 }
 
@@ -1471,7 +1580,8 @@ body.dark .prompt-form,
 body.dark .thinking-mode-button,
 body.dark .thinking-mode-menu,
 body.dark .thinking-trace,
-body.dark .quick-actions button,
+body.dark .quick-actions > button,
+body.dark .quick-action-translate,
 body.dark .session-row,
 body.dark .selected-file,
 body.dark .selected-thumb,
@@ -1495,7 +1605,8 @@ body.dark .prompt-form input {
 
 body.dark .session-title,
 body.dark .selected-meta strong,
-body.dark .quick-actions button,
+body.dark .quick-actions > button,
+body.dark .quick-action-translate,
 body.dark .thinking-mode-button,
 body.dark .thinking-mode-menu button,
 body.dark .thinking-trace-toggle,
@@ -1529,6 +1640,27 @@ body.dark .ghost-button {
   background: rgba(22, 32, 54, 0.92);
 }
 
+body.dark .quick-action-main {
+  color: var(--text);
+  background: transparent;
+}
+
+body.dark .quick-action-language-button {
+  color: var(--text);
+  border-color: #3a4b74;
+  background: rgba(17, 26, 43, 0.96);
+}
+
+body.dark .quick-action-language-menu {
+  border-color: #3a4b74;
+  background: rgba(17, 26, 43, 0.98);
+}
+
+body.dark .quick-action-language-menu button:hover,
+body.dark .quick-action-language-menu button.is-active {
+  background: rgba(70, 90, 152, 0.62);
+}
+
 body.dark .thinking-trace {
   border-color: #3a4b74;
   background: rgba(22, 32, 54, 0.9);
@@ -1560,6 +1692,11 @@ body.dark .ocr-result pre,
 body.dark .chat-bubble pre {
   background: rgba(17, 26, 43, 0.96);
   color: var(--text);
+}
+
+body.dark .math-block {
+  background: rgba(17, 26, 43, 0.94);
+  border-color: #3a4b74;
 }
 
 body.dark .chat-message.user .chat-bubble {
@@ -1645,6 +1782,18 @@ body.dark .chat-message.user .chat-bubble {
 
   .quick-actions {
     grid-template-columns: 1fr;
+  }
+
+  .quick-action-translate {
+    padding: 10px 12px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .quick-action-language-menu {
+    right: auto;
+    left: 0;
+    min-width: min(220px, calc(100vw - 48px));
   }
 
   .prompt-form {

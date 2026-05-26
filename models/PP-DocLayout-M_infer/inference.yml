@@ -3,7 +3,7 @@ draw_threshold: 0.5
 metric: COCO
 use_dynamic_shape: false
 Global:
-  model_name: PP-DocLayout-M
+  model_name: PP-DocLayout_plus-L
 arch: GFL
 min_subgraph_size: 3
 Preprocess:

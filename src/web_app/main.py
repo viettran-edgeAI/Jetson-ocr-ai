@@ -1014,21 +1014,22 @@ def read_session_markdown(session: dict[str, Any]) -> str:
 def build_prompt(prompt: str, mode: str | None, *, has_ocr: bool = True) -> str:
     cleaned = prompt.strip()
     if mode == "answer":
-        if cleaned.lower() == "answer this question":
+        if cleaned.lower() in {"answer this question", "answer the question(s)"}:
             if not has_ocr:
-                return "Answer this question. If the question is missing, ask for it briefly."
-            return "Answer the question contained in the OCR text."
+                return "Answer the question(s). If the question is missing, ask for it briefly."
+            return "Answer the question(s) contained in the OCR text."
         if not has_ocr:
-            return f"Answer this question: {cleaned}"
-        return f"Answer this question from the OCR text: {cleaned}"
-    if mode == "solve":
-        if cleaned.lower() == "solve this problem":
+            return f"Answer the question(s): {cleaned}"
+        return f"Answer the question(s) from the OCR text: {cleaned}"
+    if mode and mode.startswith("translate:"):
+        language = mode.split(":", 1)[1].strip() or "Vietnamese"
+        if cleaned.lower() == f"translate to {language.lower()}":
             if not has_ocr:
-                return "Solve this problem. If the problem is missing, ask for it briefly."
-            return "Solve the problem contained in the OCR text. Show the reasoning steps when useful."
+                return f"Translate to {language}. If the text is missing, ask for it briefly."
+            return f"Translate the OCR text to {language}."
         if not has_ocr:
-            return f"Solve this problem: {cleaned}"
-        return f"Solve this problem using the OCR text: {cleaned}"
+            return f"Translate to {language}: {cleaned}"
+        return f"Translate to {language} using the OCR text: {cleaned}"
     return cleaned
 
 

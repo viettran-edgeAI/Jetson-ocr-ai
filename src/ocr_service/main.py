@@ -52,12 +52,15 @@ def _env_bool(name: str, default: bool) -> bool:
 def warmup_pipeline(ocr: OCRPipeline) -> None:
     from PIL import Image, ImageDraw
 
-    image = Image.new("RGB", (640, 256), color=(255, 255, 255))
+    image = Image.new("RGB", (960, 480), color=(255, 255, 255))
     draw = ImageDraw.Draw(image)
-    draw.text((40, 100), "OCR WARMUP 123", fill=(0, 0, 0))
+    draw.text((48, 72), "OCR WARMUP 123", fill=(0, 0, 0))
+    draw.text((48, 164), "f(x) = x^2 + 3x + 2", fill=(0, 0, 0))
+    draw.text((48, 256), "int_0^1 x^2 dx = 1/3", fill=(0, 0, 0))
     image.save(WARMUP_IMAGE_PATH)
     try:
         ocr.predict_document(WARMUP_IMAGE_PATH)
+        ocr.warmup_formula_module()
     finally:
         if WARMUP_IMAGE_PATH.exists():
             WARMUP_IMAGE_PATH.unlink(missing_ok=True)

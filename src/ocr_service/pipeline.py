@@ -6,7 +6,7 @@ from time import perf_counter
 from typing import Any
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from .config import OCRRuntimeConfig
 from .image_ops import (
@@ -78,6 +78,15 @@ class OCRPipeline:
             trt_modules=trt_modules,
         )
         self.runtime = PaddleRuntime(self.config)
+
+    def warmup_formula_module(self) -> None:
+        if not self.config.use_formula_recognition:
+            return
+        image = Image.new("RGB", (960, 320), color=(255, 255, 255))
+        draw = ImageDraw.Draw(image)
+        draw.text((48, 56), "FORMULA WARMUP", fill=(0, 0, 0))
+        draw.text((48, 156), r"E = mc^2  int_0^1 x^2 dx = 1/3", fill=(0, 0, 0))
+        self._run_formula(image, [[32, 32, image.size[0] - 32, image.size[1] - 32]])
 
     def predict(self, image: str | Path) -> OCRResult:
         results = self.predict_document(image)
@@ -455,7 +464,7 @@ class OCRPipeline:
 
     @staticmethod
     def _to_markdown(items: list[dict[str, Any]]) -> str:
-        lines = [str(item.get("text", "")).strip() for item in items if str(item.get("text", "")).strip()]
+        lines = [str(item.get("text") or "").strip() for item in items if str(item.get("text") or "").strip()]
         return "\n".join(lines)
 
     @staticmethod

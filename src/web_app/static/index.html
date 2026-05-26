@@ -140,15 +140,53 @@
                 <path d="M5 5h14v10H8l-3 3z" />
                 <path d="M9 9h.01M12 9h.01M15 9h.01" />
               </svg>
-              Answer this question
+              Answer the question(s)
             </button>
-            <button type="button" data-mode="solve">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="6" y="4" width="12" height="16" rx="1.6" />
-                <path d="M9 8h6M9 12h.01M12 12h.01M15 12h.01M9 16h.01M12 16h.01M15 16h.01" />
-              </svg>
-              Solve this problem
-            </button>
+            <div class="quick-action-translate" id="translateQuickAction">
+              <button type="button" class="quick-action-main" data-mode="translate">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M5 7h8" />
+                  <path d="M9 5v2c0 3-1.2 5.7-3.3 7.7" />
+                  <path d="m6.1 11.8 2.6 2.9 3.2 3.3" />
+                  <path d="M14 7h5" />
+                  <path d="m16.2 5 3.8 10" />
+                  <path d="m14.7 12.2 4.1-.1" />
+                </svg>
+                Translate to
+              </button>
+              <div class="quick-action-language">
+                <button
+                  type="button"
+                  class="quick-action-language-button"
+                  id="translateLanguageButton"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                >
+                  <span id="translateLanguageLabel">Vietnamese</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m7 10 5 5 5-5" />
+                  </svg>
+                </button>
+                <div
+                  class="quick-action-language-menu"
+                  id="translateLanguageMenu"
+                  role="listbox"
+                  aria-label="Translation language"
+                  hidden
+                >
+                  <button type="button" role="option" data-translate-language="Vietnamese" aria-selected="true">Vietnamese</button>
+                  <button type="button" role="option" data-translate-language="English" aria-selected="false">English</button>
+                  <button type="button" role="option" data-translate-language="Chinese" aria-selected="false">Chinese</button>
+                  <button type="button" role="option" data-translate-language="Japanese" aria-selected="false">Japanese</button>
+                  <button type="button" role="option" data-translate-language="Korean" aria-selected="false">Korean</button>
+                  <button type="button" role="option" data-translate-language="Russian" aria-selected="false">Russian</button>
+                  <button type="button" role="option" data-translate-language="Thai" aria-selected="false">Thai</button>
+                  <button type="button" role="option" data-translate-language="French" aria-selected="false">French</button>
+                  <button type="button" role="option" data-translate-language="German" aria-selected="false">German</button>
+                  <button type="button" role="option" data-translate-language="Spanish" aria-selected="false">Spanish</button>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
       </section>
@@ -283,7 +321,7 @@
             <ul>
               <li>Upload or paste image/PDF files into the input area.</li>
               <li>Use the Copy button to copy OCR results quickly.</li>
-              <li>Chat directly, or use quick prompts: <strong>Answer this question</strong> and <strong>Solve this problem</strong>.</li>
+              <li>Chat directly, or use quick prompts: <strong>Answer the question(s)</strong> and <strong>Translate to Vietnamese</strong>.</li>
             </ul>
           </div>
           <div class="help-block">
@@ -294,6 +332,18 @@
       </div>
     </div>
 
+    <script>
+      window.MathJax = {
+        tex: {
+          displayMath: [["\\[", "\\]"], ["$$", "$$"]],
+          inlineMath: [["\\(", "\\)"]],
+        },
+        options: {
+          skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+        },
+      };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" defer></script>
     <script src="/static/app.js" defer></script>
   </body>
 </html>

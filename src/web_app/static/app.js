@@ -1,6 +1,7 @@
 const state = {
   activeSessionId: null,
   activeMode: null,
+  translateLanguage: "Vietnamese",
   thinkingMode: "fast",
   isBusy: false,
   pendingFile: null,
@@ -19,6 +20,7 @@ const state = {
 };
 
 let copyFeedbackTimer = null;
+let mathRenderFrame = 0;
 
 const els = {
   dropZone: document.querySelector("#dropZone"),
@@ -42,6 +44,10 @@ const els = {
   thinkingModeButton: document.querySelector("#thinkingModeButton"),
   thinkingModeLabel: document.querySelector("#thinkingModeLabel"),
   thinkingModeMenu: document.querySelector("#thinkingModeMenu"),
+  translateLanguageButton: document.querySelector("#translateLanguageButton"),
+  translateLanguageLabel: document.querySelector("#translateLanguageLabel"),
+  translateLanguageMenu: document.querySelector("#translateLanguageMenu"),
+  translateQuickAction: document.querySelector("#translateQuickAction"),
   promptInput: document.querySelector("#promptInput"),
   sendButton: document.querySelector("#sendButton"),
   sessionList: document.querySelector("#sessionList"),
@@ -107,6 +113,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   bindEvents();
   await loadAccountState();
   loadRecentSessions();
+  queueMathRender(document.body);
 });
 
 function bindEvents() {
@@ -182,10 +189,14 @@ function bindEvents() {
     if (!event.target.closest(".thinking-mode-wrap")) {
       closeThinkingModeMenu();
     }
+    if (!event.target.closest(".quick-action-language")) {
+      closeTranslateLanguageMenu();
+    }
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       closeThinkingModeMenu();
+      closeTranslateLanguageMenu();
     }
   });
 
@@ -207,9 +218,22 @@ function bindEvents() {
     });
   });
 
-  document.querySelectorAll(".quick-actions button").forEach((button) => {
+  document.querySelectorAll(".quick-actions [data-mode]").forEach((button) => {
     button.addEventListener("click", () => {
       submitQuickAction(button.dataset.mode);
+    });
+  });
+  on(els.translateLanguageButton, "click", (event) => {
+    event.stopPropagation();
+    toggleTranslateLanguageMenu();
+  });
+  els.translateLanguageMenu?.querySelectorAll("[data-translate-language]").forEach((button) => {
+    on(button, "click", () => {
+      const language = String(button.dataset.translateLanguage || "").trim();
+      if (language) {
+        setTranslateLanguage(language);
+      }
+      closeTranslateLanguageMenu();
     });
   });
 
@@ -240,6 +264,7 @@ function bindEvents() {
   on(els.helpCloseButton, "click", closeHelpModal);
 
   setThinkingMode(state.thinkingMode);
+  setTranslateLanguage(state.translateLanguage);
 }
 
 function attachFile(file) {
@@ -288,8 +313,10 @@ function clearSelectedFile(options = {}) {
     clearOutput();
   }
   state.activeMode = null;
+  state.translateLanguage = "Vietnamese";
   els.promptInput.value = "";
   setQuickActionActive(null);
+  setTranslateLanguage(state.translateLanguage);
   clearCopyFeedback();
   els.selectedFilePreview.hidden = true;
   els.selectedFilePreview.innerHTML = "";
@@ -378,10 +405,11 @@ async function uploadFile(file) {
 
 async function submitQuickAction(mode) {
   if (state.isBusy) return;
-  state.activeMode = mode;
-  setQuickActionActive(mode);
-  const prompt = els.promptInput.value.trim() || quickActionPrompt(mode);
-  await askQuestion({ prompt, mode });
+  const resolvedMode = normalizeQuickActionMode(mode);
+  state.activeMode = resolvedMode;
+  setQuickActionActive(resolvedMode);
+  const prompt = els.promptInput.value.trim() || quickActionPrompt(resolvedMode);
+  await askQuestion({ prompt, mode: resolvedMode });
 }
 
 async function askQuestion(options = {}) {
@@ -999,6 +1027,7 @@ function renderMessages(messages) {
       setThinkingTraceOpen(button, message);
     });
   });
+  queueMathRender(els.answerResult);
   updateOutputPlaceholderVisibility();
   els.outputCard.scrollTop = els.outputCard.scrollHeight;
 }
@@ -1063,6 +1092,7 @@ function updateChatContentElement(article, message) {
   const content = String(message.content || "");
   contentEl.hidden = !content;
   contentEl.innerHTML = content ? renderMarkdown(content) : "";
+  queueMathRender(contentEl);
 }
 
 function updateThinkingTraceElement(article, message, options = {}) {
@@ -1073,6 +1103,7 @@ function updateThinkingTraceElement(article, message, options = {}) {
   if (options.onlyWhenOpen && panelEl?.hidden) return;
   traceEl.classList.toggle("is-live", Boolean(message.thinking_in_progress));
   contentEl.innerHTML = renderThinkingTraceContent(String(message.thinking_trace || "").trim());
+  queueMathRender(contentEl);
 }
 
 function setThinkingTraceOpen(button, message) {
@@ -1451,6 +1482,7 @@ function renderMarkdown(value, options = {}) {
   let fenceMarker = null;
   let fenceLanguage = "";
   let fenceLines = [];
+  let mathBlockLines = null;
 
   const flushList = () => {
     if (listItems.length) {
@@ -1470,6 +1502,15 @@ function renderMarkdown(value, options = {}) {
     fenceLines = [];
   };
 
+  const flushMathBlock = () => {
+    if (mathBlockLines === null) return;
+    const latex = mathBlockLines.join("\n").trim();
+    if (latex) {
+      html.push(`<div class="math-block" data-math-block>\\[${escapeHtml(latex)}\\]</div>`);
+    }
+    mathBlockLines = null;
+  };
+
   for (const rawLine of lines) {
     const line = rawLine.trim();
     if (fenceMarker) {
@@ -1477,6 +1518,14 @@ function renderMarkdown(value, options = {}) {
         flushFence();
       } else {
         fenceLines.push(rawLine);
+      }
+      continue;
+    }
+    if (mathBlockLines !== null) {
+      if (line === "$$") {
+        flushMathBlock();
+      } else {
+        mathBlockLines.push(rawLine);
       }
       continue;
     }
@@ -1493,6 +1542,11 @@ function renderMarkdown(value, options = {}) {
       fenceMarker = line.match(/^`+/)?.[0] || "```";
       fenceLanguage = line.slice(fenceMarker.length).trim();
       fenceLines = [];
+      continue;
+    }
+    if (line === "$$") {
+      flushList();
+      mathBlockLines = [];
       continue;
     }
     if (/^---+$/.test(line)) {
@@ -1514,9 +1568,40 @@ function renderMarkdown(value, options = {}) {
       html.push(`<p${className}>${escaped}</p>`);
     }
   }
+  flushMathBlock();
   flushFence();
   flushList();
   return html.join("") || "<p></p>";
+}
+
+function queueMathRender(root) {
+  const target = root instanceof Element ? root : document.body;
+  if (!target) return;
+  if (mathRenderFrame && window.cancelAnimationFrame) {
+    window.cancelAnimationFrame(mathRenderFrame);
+    mathRenderFrame = 0;
+  }
+  const run = () => {
+    mathRenderFrame = 0;
+    renderMath(target);
+  };
+  mathRenderFrame = window.requestAnimationFrame
+    ? window.requestAnimationFrame(run)
+    : window.setTimeout(run, 16);
+}
+
+function renderMath(root) {
+  const target = root instanceof Element ? root : document.body;
+  if (!target || !window.MathJax?.typesetPromise) return;
+  const startup = window.MathJax.startup?.promise || Promise.resolve();
+  startup
+    .then(() => {
+      if (typeof window.MathJax.typesetClear === "function") {
+        window.MathJax.typesetClear([target]);
+      }
+      return window.MathJax.typesetPromise([target]);
+    })
+    .catch((_error) => {});
 }
 
 function updateOutputPlaceholderVisibility() {
@@ -1526,14 +1611,18 @@ function updateOutputPlaceholderVisibility() {
 }
 
 function setQuickActionActive(mode) {
-  document.querySelectorAll(".quick-actions button").forEach((button) => {
-    button.classList.toggle("is-active", mode && button.dataset.mode === mode);
+  document.querySelectorAll(".quick-actions [data-mode]").forEach((button) => {
+    const buttonMode = button.dataset.mode || "";
+    button.classList.toggle("is-active", Boolean(mode) && buttonMode === normalizeQuickActionMode(mode));
   });
+  if (els.translateQuickAction) {
+    els.translateQuickAction.classList.toggle("is-active", String(mode || "").startsWith("translate:"));
+  }
 }
 
 function quickActionPrompt(mode) {
-  if (mode === "solve") return "Solve this problem";
-  return "Answer this question";
+  if (String(mode || "").startsWith("translate:")) return `Translate to ${state.translateLanguage}`;
+  return "Answer the question(s)";
 }
 
 function inlineMarkdown(value) {
@@ -1556,9 +1645,51 @@ function fileTypeLabel(filename, contentType) {
 function displayUserPrompt(value) {
   return String(value)
     .replace(/^Answer this question from the OCR text:\s*/i, "")
-    .replace(/^Solve this problem using the OCR text:\s*/i, "")
+    .replace(/^Answer the question\(s\) from the OCR text:\s*/i, "")
+    .replace(/^Translate to [^:]+ using the OCR text:\s*/i, "")
     .replace(/^Answer this question:\s*/i, "")
-    .replace(/^Solve this problem:\s*/i, "");
+    .replace(/^Answer the question\(s\):\s*/i, "")
+    .replace(/^Translate to [^:]+:\s*/i, "");
+}
+
+function toggleTranslateLanguageMenu() {
+  const menu = els.translateLanguageMenu;
+  const button = els.translateLanguageButton;
+  if (!menu || !button) return;
+  const willOpen = menu.hidden;
+  menu.hidden = !willOpen;
+  button.setAttribute("aria-expanded", willOpen ? "true" : "false");
+}
+
+function closeTranslateLanguageMenu() {
+  const menu = els.translateLanguageMenu;
+  const button = els.translateLanguageButton;
+  if (!menu || !button) return;
+  menu.hidden = true;
+  button.setAttribute("aria-expanded", "false");
+}
+
+function setTranslateLanguage(language) {
+  state.translateLanguage = String(language || "Vietnamese").trim() || "Vietnamese";
+  if (els.translateLanguageLabel) {
+    els.translateLanguageLabel.textContent = state.translateLanguage;
+  }
+  if (String(state.activeMode || "").startsWith("translate:")) {
+    state.activeMode = normalizeQuickActionMode("translate");
+    setQuickActionActive(state.activeMode);
+  }
+  els.translateLanguageMenu?.querySelectorAll("[data-translate-language]").forEach((button) => {
+    const isActive = button.dataset.translateLanguage === state.translateLanguage;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+}
+
+function normalizeQuickActionMode(mode) {
+  if (mode === "translate" || String(mode || "").startsWith("translate:")) {
+    return `translate:${state.translateLanguage}`;
+  }
+  return String(mode || "");
 }
 
 function canAttachDocument() {
@@ -1567,16 +1698,28 @@ function canAttachDocument() {
 
 async function copyCurrentOcr() {
   if (!state.currentMarkdown) return;
+  const textToCopy = cleanedOcrMarkdownForCopy(state.currentMarkdown);
   try {
     if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(state.currentMarkdown);
+      try {
+        await navigator.clipboard.writeText(textToCopy);
+      } catch (_error) {
+        fallbackCopyText(textToCopy);
+      }
     } else {
-      fallbackCopyText(state.currentMarkdown);
+      fallbackCopyText(textToCopy);
     }
     setCopyFeedback("Copied");
   } catch (error) {
     setCopyFeedback("Copy failed");
   }
+}
+
+function cleanedOcrMarkdownForCopy(value) {
+  return String(value || "")
+    .replace(/^<!--\s*source:\s*.*?-->\s*\n*/i, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function fallbackCopyText(value) {
@@ -1585,10 +1728,16 @@ function fallbackCopyText(value) {
   field.setAttribute("readonly", "readonly");
   field.style.position = "fixed";
   field.style.opacity = "0";
+  field.style.left = "-9999px";
+  field.style.top = "0";
   document.body.appendChild(field);
   field.select();
-  document.execCommand("copy");
+  field.setSelectionRange(0, field.value.length);
+  const copied = document.execCommand("copy");
   document.body.removeChild(field);
+  if (!copied) {
+    throw new Error("Copy command failed");
+  }
 }
 
 function setCopyFeedback(message) {
@@ -1714,6 +1863,7 @@ function showOcrContent(html) {
   } else {
     els.ocrResult.hidden = false;
   }
+  queueMathRender(els.ocrResult);
 }
 
 function decorateSessionWithThinkingTrace(session, thinkingTrace) {
