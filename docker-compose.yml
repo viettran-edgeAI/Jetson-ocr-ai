@@ -83,8 +83,8 @@ services:
       LD_LIBRARY_PATH: /opt/llama.cpp/build/bin:/usr/local/cuda/lib64:/usr/lib/aarch64-linux-gnu/nvidia
       LLM_CTX_SIZE: 8192
       LLM_MAX_OCR_CHARS: 6000
-      LLM_MAX_TOKENS: 512
-      LLM_THINKING_MAX_TOKENS: 1024
+      LLM_MAX_TOKENS: 2048
+      LLM_THINKING_MAX_TOKENS: 2048
       LLM_DISABLE_THINKING: 0
       LLM_TEMPERATURE: 0.2
       LLM_TOP_P: 0.95

@@ -172,22 +172,13 @@ class OCRPipeline:
         timings_ms["polarity_preprocess"] = round((perf_counter() - started) * 1000.0, 2)
         debug["polarity_preprocess"] = polarity_debug
 
-        # General OCR first so formula-only pages can fall back to full-page formula recognition.
-        started = perf_counter()
-        text_items = self._run_text(image)
-        timings_ms["ocr_primary"] = round((perf_counter() - started) * 1000.0, 2)
-        debug["ocr"] = {"count": len(text_items)}
-
         working = image
-        orientation_label: str | None = None
         if self.config.use_doc_orientation_classify:
             started = perf_counter()
             try:
                 ori_res = self.runtime.predict_doc_orientation(pil_to_numpy(working))
                 orientation_label = self._extract_first_label(ori_res)
                 working = rotate_by_label(working, orientation_label)
-                if orientation_label:
-                    text_items = self._rotate_items(text_items, orientation_label, image.size)
                 debug["doc_orientation"] = {"label": orientation_label, "raw": self._sanitize(ori_res)}
             except Exception as exc:
                 debug["doc_orientation"] = {"error": str(exc)}
@@ -217,40 +208,36 @@ class OCRPipeline:
             timings_ms["layout"] = round((perf_counter() - started) * 1000.0, 2)
 
         region_blocks: list[dict[str, Any]] = []
-        if self.config.use_region_detection:
-            started = perf_counter()
-            try:
-                region_res = self.runtime.predict_regions(pil_to_numpy(working))
-                region_blocks = self._extract_layout_boxes(region_res)
-                debug["regions"] = self._sanitize(region_res)
-            except Exception as exc:
-                debug["regions"] = {"error": str(exc)}
-            timings_ms["regions"] = round((perf_counter() - started) * 1000.0, 2)
+        debug["regions"] = {"skipped": True, "reason": "region_detection_removed"}
+        timings_ms["regions"] = None
 
         formula_items: list[dict[str, Any]] = []
+        masked_for_text = working
         if self.config.use_formula_recognition:
             formula_boxes = [item["bbox"] for item in layout_blocks if "formula" in item.get("label", "").lower()]
-            if not formula_boxes and not text_items:
-                width, height = working.size
-                formula_boxes = [[0, 0, width, height]]
             if formula_boxes:
                 started = perf_counter()
                 try:
                     formula_items = self._run_formula(working, formula_boxes)
                     debug["formula"] = {"count": len(formula_items)}
                     if formula_items:
-                        reocr_started = perf_counter()
-                        masked = mask_bboxes(working, [item["bbox"] for item in formula_items])
-                        text_items = self._run_text(masked)
-                        timings_ms["ocr_after_formula_mask"] = round(
-                            (perf_counter() - reocr_started) * 1000.0,
-                            2,
-                        )
+                        masked_for_text = mask_bboxes(working, [item["bbox"] for item in formula_items])
                     else:
                         timings_ms["ocr_after_formula_mask"] = None
                 except Exception as exc:
                     debug["formula"] = {"error": str(exc)}
                 timings_ms["formula"] = round((perf_counter() - started) * 1000.0, 2)
+            else:
+                timings_ms["formula"] = None
+                timings_ms["ocr_after_formula_mask"] = None
+        else:
+            timings_ms["formula"] = None
+            timings_ms["ocr_after_formula_mask"] = None
+
+        started = perf_counter()
+        text_items = self._run_text(masked_for_text)
+        timings_ms["ocr_primary"] = round((perf_counter() - started) * 1000.0, 2)
+        debug["ocr"] = {"count": len(text_items)}
 
         merged_items = self._merge_items(text_items, formula_items, region_blocks)
         markdown = self._to_markdown(merged_items)
@@ -284,7 +271,7 @@ class OCRPipeline:
                 "engine": self.config.engine,
                 "use_document_structure": self.config.use_document_structure,
                 "use_layout_detection": self.config.use_layout_detection,
-                "use_region_detection": self.config.use_region_detection,
+                "use_region_detection": False,
                 "use_formula_recognition": self.config.use_formula_recognition,
                 "debug": debug,
             },
@@ -308,7 +295,7 @@ class OCRPipeline:
                 {
                     "type": "formula",
                     "bbox": box,
-                    "text": f"$$\n{formula}\n$$",
+                    "text": f"\\[{ ' '.join(formula.splitlines()) }\\]",
                     "latex": formula,
                     "score": float(raw.get("rec_score", 1.0)),
                 }
