@@ -26,6 +26,8 @@ Keep this document brief and update it whenever folders change.
 | `third_party/llama-bin/bin/` | Validated host `llama.cpp` runtime artifacts copied into `Dockerfile.llm`. |
 | `docker/` | Additional Docker build packages and alternate image definitions. |
 | `docker/paddleocr-l4t-base/` | Minimal OCR image package based on `l4t-base` plus the PaddleOCR runtime. |
+| `scripts/` | Local helper scripts for OCR diagnostics, benchmarking, and visualization. |
+| `scripts/measure_pipeline_baseline.py` | End-to-end baseline timing script for OCR pipeline runs on local fixtures. |
 | `src/` | Application source code. |
 | `src/ocr_service/` | OCR pipeline and internal OCR API service. |
 | `src/ocr_service/pipeline.py` | Document-level OCR wrapper for image/PDF loading, OCR stages, and Markdown assembly. |

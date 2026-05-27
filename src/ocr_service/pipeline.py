@@ -23,6 +23,28 @@ from .image_ops import (
 from .models import OCRBlock, OCRFormula, OCRLine, OCRRegion, OCRResult
 from .paddle_adapter import PaddleRuntime
 
+_SINGLE_CHAR_ALLOWED = {
+    "\n",
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "$",
+    "\\",
+    "[",
+    "]",
+    "(",
+    ")",
+    "{",
+    "}",
+}
+
 
 @dataclass(slots=True)
 class PipelineOptions:
@@ -240,6 +262,7 @@ class OCRPipeline:
         debug["ocr"] = {"count": len(text_items)}
 
         merged_items = self._merge_items(text_items, formula_items, region_blocks)
+        merged_items = self._filter_single_char_rows(merged_items)
         markdown = self._to_markdown(merged_items)
         lines = self._build_lines(merged_items, page_index=page_index)
         blocks = self._build_blocks(merged_items, page_index=page_index)
@@ -373,6 +396,25 @@ class OCRPipeline:
         for item in merged:
             item["region_id"] = self._find_region_id(item["bbox"], regions) if regions else None
         return merged
+
+    @staticmethod
+    def _is_drop_single_char_text(text: str) -> bool:
+        normalized = text.replace("\t", "").replace(" ", "")
+        if len(normalized) != 1:
+            return False
+        return normalized not in _SINGLE_CHAR_ALLOWED
+
+    def _filter_single_char_rows(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        filtered: list[dict[str, Any]] = []
+        for item in items:
+            if str(item.get("type") or "") != "text":
+                filtered.append(item)
+                continue
+            text = str(item.get("text") or "")
+            if self._is_drop_single_char_text(text):
+                continue
+            filtered.append(item)
+        return filtered
 
     def _build_lines(self, items: list[dict[str, Any]], *, page_index: int) -> list[OCRLine]:
         lines: list[OCRLine] = []

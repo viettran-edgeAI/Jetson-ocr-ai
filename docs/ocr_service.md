@@ -81,6 +81,16 @@ It measures the time spent in:
 - textline orientation classification
 - text recognition
 
+### `scripts/measure_pipeline_baseline.py`
+
+Baseline end-to-end timing script for the current OCR pipeline configuration.
+
+It runs the pipeline on an image set and writes:
+
+- per-file wall-clock timing
+- per-page pipeline timing
+- aggregate average timing for comparison runs
+
 ### `src/ocr_service/__init__.py`
 
 Package marker only.
@@ -448,6 +458,8 @@ It reports metrics such as:
 - recognition batch counts
 - crop ratio statistics
 - recognition input width statistics
+
+For end-to-end baseline comparison runs on `test_set/`, use `scripts/measure_pipeline_baseline.py`.
 
 ## Operational Notes
 
