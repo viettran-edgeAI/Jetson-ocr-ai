@@ -1,23 +1,52 @@
 <h1 align="center">OCR AI Assistant</h1>
 
 <p align="center">
-  <strong>Local OCR + LLM stack for Jetson Orin Nano Super</strong>
+  <strong>Fast local OCR, quick question answering, and multilingual translation on Jetson Orin Nano Super.</strong>
 </p>
 
 <p align="center">
-  <a href="https://jetsonocrai.cc">jetsonocrai.cc</a>
+  <a href="https://jetsonocrai.cc"><strong>jetsonocrai.cc</strong></a>
 </p>
 
 <p align="center">
-  <img src="./docs/ocr_ai_demo.gif" alt="OCR AI demo" width="960" />
+  <img src="./docs/ocr_ai_demo.gif" alt="OCR AI Assistant demo" width="960" />
 </p>
+
+## Overview
+
+OCR AI Assistant is a lightweight local OCR + LLM application built for fast document reading tasks. It extracts text from images and documents, helps answer short questions or multiple-choice quizzes, and translates OCR results across languages.
+
+## Key Features
+
+- **Fast OCR extraction** from images and simple PDF pages.
+- **Quick Q&A** for short questions, quizzes, and multiple-choice prompts.
+- **Multilingual translation** for OCR text and user prompts.
+- **Formula-aware recognition** for documents that contain mathematical expressions.
+- **Local-first deployment** with separate web, OCR, and LLM services.
+
+## Best For
+
+- Screenshots, notes, exercises, and scanned pages.
+- Short OCR tasks that need immediate answers.
+- Translating extracted text between languages.
+- Reading documents that mix normal text and formulas.
+
+## Limitations
+
+This project is optimized for quick and simple OCR workflows. Very large PDFs, dense academic papers, complex layouts, low-quality scans, or heavily formatted documents may require more processing time and can produce less accurate results.
+
+## Architecture
 
 <p align="center">
-  An application for quick and simple OCR operations, quick quizzes, and multilingual translation.
+  <img src="./docs/ocr_ai_architecture.png" alt="OCR AI Assistant architecture" width="960" />
 </p>
 
-<p align="center">
-  <img src="./docs/ocr_ai_architecture.png" alt="OCR AI architecture" width="960" />
-</p>
+The application is split into three main services:
 
-For the full system design, service docs, and workspace layout, see the detailed documentation in [docs/](./docs/).
+- **web_app** — browser interface, upload flow, sessions, and API calls.
+- **ocr-service** — OCR pipeline for text, layout, and formula extraction.
+- **llm-service** — local LLM service for answers, translation, and prompt handling.
+
+## Documentation
+
+For system design, service details, and workspace layout, see [docs/](./docs/).

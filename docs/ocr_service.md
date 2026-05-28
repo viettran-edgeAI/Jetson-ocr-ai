@@ -6,7 +6,7 @@ This document describes the internal OCR service in `src/ocr_service/`: what it 
 
 `ocr-service` is the private OCR backend for the Jetson stack. It accepts a single uploaded image or PDF, runs the replacement Jetson OCR pipeline locally, converts the result into Markdown, and returns that Markdown to the caller.
 
-The current implementation keeps the existing `POST /v1/ocr` contract used by `web-app`, but the internals now follow the newer document pipeline from `models/new_ocr_pipeline.md`: image/PDF page loading, optional document orientation and unwarping, layout detection, optional region detection, formula recognition, formula masking, general text OCR, reading-order merge, and Markdown assembly.
+The current implementation keeps the existing `POST /v1/ocr` contract used by `web-app`, but the internals now follow the newer document pipeline from `models/new_ocr_pipeline.md`: image/PDF page loading, optional document orientation and unwarping, layout detection, formula recognition, formula masking, general text OCR, reading-order merge, and Markdown assembly.
 
 It is designed to be used by `web-app` over the internal Docker network, not directly from the public internet.
 
@@ -38,7 +38,7 @@ This file coordinates:
 
 - image and PDF page loading
 - optional document orientation classification and unwarping
-- layout detection and region detection
+- layout detection
 - formula recognition plus formula masking before re-running text OCR
 - text detection, optional textline orientation, and text recognition
 - reading-order merge and document-level Markdown assembly
@@ -57,7 +57,7 @@ Small image and geometry helpers shared by the replacement pipeline.
 
 ### `src/ocr_service/models.py`
 
-Structured result dataclasses for pages, lines, reconstructed blocks, detected layout/region boxes, and formulas.
+Structured result dataclasses for pages, lines, reconstructed blocks, detected layout boxes, and formulas.
 
 ### `src/ocr_service/local_infer.py`
 
@@ -166,10 +166,10 @@ The main runtime path is:
 3. Run dark-background normalization.
 4. Run general text OCR once to establish text presence.
 5. Optionally run document orientation classification and unwarping.
-6. Optionally run layout detection and region detection.
+6. Optionally run layout detection.
 7. Run formula recognition for layout regions labeled as formulas.
 8. Mask recognized formula regions and re-run general text OCR when formulas were found.
-9. Sort text and formula items into reading order and attach region IDs where available.
+9. Sort text and formula items into reading order.
 10. Convert merged items into `OCRResult` page objects.
 11. Combine page Markdown into a final document Markdown response.
 
@@ -184,7 +184,6 @@ OCR_USE_DOCUMENT_STRUCTURE=1
 Optional per-stage flags default to the document-structure setting:
 
 - `OCR_USE_LAYOUT_DETECTION`
-- `OCR_USE_REGION_DETECTION`
 - `OCR_USE_FORMULA_RECOGNITION`
 
 Other controls:
@@ -309,6 +308,9 @@ The service applies a few heuristics before block reconstruction:
 - recognition scores below `0.8` trigger a low-confidence warning
 - short marker-like strings such as `o`, `x`, `v`, `□`, `○`, `●` trigger a marker warning
 - duplicate lines are suppressed when the normalized text matches a recent accepted line and the boxes overlap strongly
+- single-character noise lines are removed after tab/space stripping, except for `\n`, `a`-`e`, `A`-`E`, and the LaTeX wrapper characters used for display-math blocks
+
+Formula content is emitted as display-math markdown blocks using `\[` and `\]`, which keeps MathJax rendering active without inserting `$$` delimiters.
 
 ### Layout reconstruction
 
@@ -375,7 +377,7 @@ Important nested fields:
 - `pages`: list of per-page `OCRResult.to_dict()` objects
 - `lines`: flattened line list across pages
 - `blocks`: flattened block list across pages
-- `regions`: flattened layout/region detections across pages
+- `regions`: flattened layout/region detections across pages; the current pipeline skips region detection, so this remains empty unless that stage is reintroduced
 - `formulas`: flattened recognized formulas across pages
 - `warnings`: flattened warning list across pages
 - `timings_ms.document_total`: sum of per-page totals
@@ -445,6 +447,8 @@ Useful CLI options include:
 - `--trt-modules`
 - `--clear-trt-cache`
 - `--warmup-runs`
+
+`--region-model-dir` is retained for compatibility with older structured-pipeline settings, but the current runtime path does not execute region detection.
 
 ## Benchmark Utility
 

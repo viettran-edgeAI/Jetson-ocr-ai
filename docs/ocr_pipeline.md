@@ -1,5 +1,45 @@
 # PaddleOCR 3.x Module Reference
 
+Input image / PDF page 
+↓
+[1] Optional Document Preprocessing 
+├─ Document Orientation Classification 
+│ └─ PP-LCNet_x1_0_doc_ori_infer 
+│ 
+└─ Document Image Unwarping 
+└─ UVDoc_infer 
+↓
+[2] Layout Detection 
+└─ PP-DocLayout_plus-L_infer 
+- detect: text, formula, title, image, table... depending on the supported model class 
+↓
+[3] Formula Recognition
+└─ PP-FormulaNet_plus-S_infer 
+- get crop from bbox label=formula 
+- export LaTeX/formula text 
+↓
+[4] Formula Masking
+└─ No model needed 
+- whiten bbox formula before OCR text 
+↓
+[5] General Text OCR
+├─ Text Detection 
+│ └─ PP-OCRv5_mobile_det 
+│ 
+├─ Optional Text Line Orientation Classification 
+│ └─ PP-LCNet_x0_25_textline_ori_infer 
+│ 
+└─ Text Recognition 
+└─ PP-OCRv5_mobile_rec 
+↓
+[6] Postprocessing
+└─ No model needed 
+- merge OCR text + LaTeX formula + image placeholders 
+- sort by bbox / reading order
+- export Markdown/JSON/visualization
+- drop single-character noise rows after tab/space stripping, except for `\n`, `a`-`e`, `A`-`E`, and LaTeX wrapper characters
+- emit formula blocks as display math so downstream markdown renderers can keep LaTeX rendering enabled without `$$`
+
 This document summarizes the main PaddleOCR 3.x modules used in document OCR, layout analysis, formula recognition, and text recognition.
 
 Sources:
@@ -10,6 +50,7 @@ Sources:
 - Text Detection: https://www.paddleocr.ai/main/en/version3.x/module_usage/text_detection.html
 - Text Line Orientation Classification: https://www.paddleocr.ai/main/en/version3.x/module_usage/textline_orientation_classification.html
 - Text Recognition: https://www.paddleocr.ai/main/en/version3.x/module_usage/text_recognition.html
+
 
 ---
 
@@ -461,48 +502,3 @@ Main output fields:
 | `batch_size` | `int` | `1` | Batch size for prediction. |
 
 ---
-
-## Recommended Mapping for OCR-Service
-
-Input image / PDF page 
-↓
-[1] Optional Document Preprocessing 
-├─ Document Orientation Classification 
-│ └─ PP-LCNet_x1_0_doc_ori_infer 
-│ 
-└─ Document Image Unwarping 
-└─ UVDoc_infer 
-↓
-[2] Layout Detection 
-└─ PP-DocLayout_plus-L_infer 
-- detect: text, formula, title, image, table... depending on the supported model class 
-↓
-[3] Optional Region Detection 
-└─ PP-DocBlockLayout_infer 
-- divide block/region 
-- Support grouping and reading order 
-↓
-[4] Formula Recognition 
-└─ PP-FormulaNet_plus-S_infer 
-- get crop from bbox label=formula 
-- export LaTeX/formula text 
-↓
-[5] Formula Masking 
-└─ No model needed 
-- whiten bbox formula before OCR text 
-↓
-[6] General Text OCR 
-├─ Text Detection 
-│ └─ PP-OCRv5_mobile_det 
-│ 
-├─ Optional Text Line Orientation Classification 
-│ └─ PP-LCNet_x0_25_textline_ori_infer 
-│ 
-└─ Text Recognition 
-└─ PP-OCRv5_mobile_rec 
-↓
-[7] Postprocessing 
-└─ No model needed 
-- merge OCR text + LaTeX formula + image placeholders 
-- sort by bbox / region / reading order 
-- export Markdown/JSON/visualization
