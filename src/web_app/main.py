@@ -628,10 +628,16 @@ async def ask_session(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
+    answer_text = str(answer.get("answer") or "").strip()
+    answer_text = append_max_tokens_notice_if_needed(
+        answer_text,
+        stopped_due_to_max_tokens=bool(answer.get("stopped_due_to_max_tokens")),
+        max_tokens_limit=as_int_or_none(answer.get("max_tokens_limit")),
+    )
     store.add_message(
         session_id=session_id,
         role="assistant",
-        content=answer["answer"],
+        content=answer_text,
         elapsed_ms=answer.get("elapsed_ms", elapsed_ms),
         prompt_tokens=answer.get("prompt_tokens"),
         completion_tokens=answer.get("completion_tokens"),
@@ -753,6 +759,11 @@ async def ask_session_stream(
             )
             yield sse_event("error", {"detail": detail})
             return
+        answer_text = append_max_tokens_notice_if_needed(
+            answer_text,
+            stopped_due_to_max_tokens=bool(final_meta.get("stopped_due_to_max_tokens")),
+            max_tokens_limit=as_int_or_none(final_meta.get("max_tokens_limit")),
+        )
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         answer_elapsed_ms = as_int(final_meta.get("elapsed_ms"), fallback=elapsed_ms)
@@ -794,6 +805,8 @@ async def ask_session_stream(
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
+            "stopped_due_to_max_tokens": bool(final_meta.get("stopped_due_to_max_tokens")),
+            "max_tokens_limit": as_int_or_none(final_meta.get("max_tokens_limit")),
             "session": serialize_session_detail(updated),
         }
         yield sse_event("done", payload)
@@ -950,6 +963,26 @@ def as_int_or_none(value: Any) -> int | None:
 def as_int(value: Any, *, fallback: int) -> int:
     parsed = as_int_or_none(value)
     return parsed if parsed is not None else fallback
+
+
+def append_max_tokens_notice_if_needed(
+    answer_text: str,
+    *,
+    stopped_due_to_max_tokens: bool,
+    max_tokens_limit: int | None,
+) -> str:
+    text = str(answer_text or "").strip()
+    if not stopped_due_to_max_tokens:
+        return text
+    if max_tokens_limit is not None and max_tokens_limit > 0:
+        notice = f"Sorry, answer exceeds max tokens ({max_tokens_limit})."
+    else:
+        notice = "Sorry, answer exceeds max tokens."
+    if notice in text:
+        return text
+    if not text:
+        return notice
+    return f"{text}\n\n{notice}"
 
 
 def message_history_for_llm(messages: list[dict[str, Any]]) -> list[dict[str, str]]:

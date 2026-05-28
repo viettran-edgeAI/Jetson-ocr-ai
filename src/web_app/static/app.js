@@ -110,7 +110,9 @@ const iconMore = `
 `;
 
 document.addEventListener("DOMContentLoaded", async () => {
+  ensureDynamicChatStyles();
   bindEvents();
+  hideOcrContent();
   await loadAccountState();
   loadRecentSessions();
   queueMathRender(document.body);
@@ -434,6 +436,7 @@ async function askQuestion(options = {}) {
       {
         role: "assistant",
         content: "",
+        answer_complete: false,
         thinking_trace: useThinkingTrace ? "" : undefined,
         thinking_in_progress: useThinkingTrace,
         thinking_open: false,
@@ -474,6 +477,7 @@ async function askQuestion(options = {}) {
         if (answerText) {
           optimisticMessages[assistantIndex].content = answerText;
         }
+        optimisticMessages[assistantIndex].answer_complete = true;
         optimisticMessages[assistantIndex].elapsed_ms = toFiniteNumberOrUndefined(data?.elapsed_ms);
         optimisticMessages[assistantIndex].prompt_tokens = toFiniteNumberOrUndefined(data?.prompt_tokens);
         optimisticMessages[assistantIndex].completion_tokens = toFiniteNumberOrUndefined(data?.completion_tokens);
@@ -813,12 +817,8 @@ function renderSession(session) {
     renderChatOnlySessionShell();
   }
 
-  if (state.currentMarkdown) {
-    showOcrContent(renderMarkdown(state.currentMarkdown, { preserveWhitespace: true }));
-  } else {
-    hideOcrContent();
-    clearCopyFeedback();
-  }
+  hideOcrContent();
+  clearCopyFeedback();
 
   renderMessages(state.currentMessages);
   updateOutputPlaceholderVisibility();
@@ -949,7 +949,7 @@ function renderChatOnlySessionShell() {
 }
 
 function renderMessages(messages) {
-  const visibleMessages = messages || [];
+  const visibleMessages = buildVisibleMessages(messages);
   if (!visibleMessages.length) {
     els.answerResult.hidden = true;
     els.answerResult.innerHTML = "";
@@ -961,15 +961,23 @@ function renderMessages(messages) {
   els.answerResult.innerHTML = visibleMessages
     .map((message, index) => {
       const role = message.role === "user" ? "user" : "assistant";
-      const label = role === "user" ? "You" : "Jetson AI";
+      const label = role === "assistant" ? "Jetson AI" : "";
       const errorClass = message.error ? " is-error" : "";
-      const content = role === "user" ? displayUserPrompt(message.content || "") : message.content || "";
+      const content = role === "user"
+        ? message.is_ocr_result
+          ? String(message.content || "")
+          : displayUserPrompt(message.content || "")
+        : message.content || "";
       const speed = role === "assistant" ? answerSpeedText(message) : "";
+      const showCopyButton = role === "assistant"
+        && Boolean(String(message.content || "").trim())
+        && isAssistantMessageComplete(message, index, visibleMessages);
       const thinkingTrace = role === "assistant" ? String(message.thinking_trace || "").trim() : "";
       const hasThinkingTrace = Boolean(thinkingTrace);
       const thinkingInProgress = Boolean(role === "assistant" && message.thinking_in_progress);
       const showThinkingBox = thinkingInProgress || hasThinkingTrace;
       const thinkingOpen = Boolean(role === "assistant" && message.thinking_open);
+      const hasFooter = role === "assistant" && (showCopyButton || speed);
       const thinkingBox = showThinkingBox
         ? `
           <section class="thinking-trace ${thinkingInProgress ? "is-live" : ""} ${thinkingOpen ? "is-open" : ""}" data-thinking-trace>
@@ -999,17 +1007,30 @@ function renderMessages(messages) {
         : "";
       return `
         <article class="chat-message ${role}${errorClass}" data-message-index="${index}" data-message-role="${role}">
-          <div class="chat-role">${label}</div>
+          ${label ? `<div class="chat-role">${label}</div>` : ""}
           <div class="chat-bubble">
             ${thinkingBox}
             ${
               role === "assistant"
                 ? `<div class="chat-bubble-content" data-chat-content ${content ? "" : "hidden"}>${content ? renderMarkdown(content) : ""}</div>`
                 : content
-                  ? `<div class="chat-bubble-content">${renderMarkdown(content)}</div>`
+                  ? `<div class="chat-bubble-content">${renderMarkdown(content, { preserveWhitespace: Boolean(message.is_ocr_result) })}</div>`
                   : ""
             }
-            ${speed ? `<div class="chat-bubble-meta" data-chat-meta>${escapeHtml(speed)}</div>` : ""}
+            ${
+              hasFooter
+                ? `
+                  <div class="chat-bubble-footer">
+                    ${
+                      showCopyButton
+                        ? `<button type="button" class="copy-answer-button" data-copy-answer="${index}">Copy</button>`
+                        : "<span></span>"
+                    }
+                    ${speed ? `<div class="chat-bubble-meta" data-chat-meta>${escapeHtml(speed)}</div>` : ""}
+                  </div>
+                `
+                : ""
+            }
           </div>
         </article>
       `;
@@ -1029,6 +1050,23 @@ function renderMessages(messages) {
       setThinkingTraceOpen(button, message);
     });
   });
+  els.answerResult.querySelectorAll("[data-copy-answer]").forEach((button) => {
+    on(button, "click", async () => {
+      const index = Number(button.dataset.copyAnswer);
+      if (!Number.isInteger(index) || index < 0 || index >= visibleMessages.length) {
+        return;
+      }
+      const message = visibleMessages[index];
+      const content = String(message?.content || "").trim();
+      if (!content) return;
+      try {
+        await copyText(content);
+        setCopyButtonFeedback(button, "Copied");
+      } catch (_error) {
+        setCopyButtonFeedback(button, "Failed");
+      }
+    });
+  });
   queueMathRender(els.answerResult);
   updateOutputPlaceholderVisibility();
   els.outputCard.scrollTop = els.outputCard.scrollHeight;
@@ -1044,8 +1082,9 @@ function createStreamingMessageUpdater(messages, assistantIndex) {
   function apply() {
     frameQueued = false;
     const message = messages[assistantIndex];
+    const visibleAssistantIndex = mapRawMessageIndexToVisibleIndex(messages, assistantIndex);
     const article = els.answerResult?.querySelector(
-      `[data-message-index="${assistantIndex}"][data-message-role="assistant"]`
+      `[data-message-index="${visibleAssistantIndex}"][data-message-role="assistant"]`
     );
     if (!message || !article) {
       pending.answer = false;
@@ -1702,19 +1741,25 @@ async function copyCurrentOcr() {
   if (!state.currentMarkdown) return;
   const textToCopy = cleanedOcrMarkdownForCopy(state.currentMarkdown);
   try {
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(textToCopy);
-      } catch (_error) {
-        fallbackCopyText(textToCopy);
-      }
-    } else {
-      fallbackCopyText(textToCopy);
-    }
+    await copyText(textToCopy);
     setCopyFeedback("Copied");
   } catch (error) {
     setCopyFeedback("Copy failed");
   }
+}
+
+async function copyText(value) {
+  const textToCopy = String(value || "");
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      return;
+    } catch (_error) {
+      fallbackCopyText(textToCopy);
+      return;
+    }
+  }
+  fallbackCopyText(textToCopy);
 }
 
 function cleanedOcrMarkdownForCopy(value) {
@@ -1761,6 +1806,21 @@ function clearCopyFeedback() {
   if (els.copyOcrStatus) {
     els.copyOcrStatus.textContent = "";
   }
+}
+
+function setCopyButtonFeedback(button, message) {
+  if (!button) return;
+  if (button._feedbackTimer) {
+    window.clearTimeout(button._feedbackTimer);
+    button._feedbackTimer = null;
+  }
+  button.disabled = true;
+  button.textContent = message;
+  button._feedbackTimer = window.setTimeout(() => {
+    button.textContent = "Copy";
+    button.disabled = false;
+    button._feedbackTimer = null;
+  }, 1200);
 }
 
 function enterSelectionMode() {
@@ -1862,9 +1922,8 @@ function showOcrContent(html) {
   els.ocrResult.innerHTML = html;
   if (els.ocrPanel) {
     els.ocrPanel.hidden = false;
-  } else {
-    els.ocrResult.hidden = false;
   }
+  els.ocrResult.hidden = false;
   queueMathRender(els.ocrResult);
 }
 
@@ -1887,17 +1946,113 @@ function hideOcrContent() {
   if (!els.ocrResult) return;
   els.ocrResult.innerHTML = "";
   if (els.ocrPanel) {
-    els.ocrPanel.hidden = true;
-  } else {
-    els.ocrResult.hidden = true;
+    els.ocrPanel.hidden = false;
   }
+  els.ocrResult.hidden = true;
 }
 
 function isOcrVisible() {
-  if (els.ocrPanel) {
-    return !els.ocrPanel.hidden;
-  }
   return Boolean(els.ocrResult) && !els.ocrResult.hidden;
+}
+
+function buildVisibleMessages(messages) {
+  const rawMessages = Array.isArray(messages) ? messages : [];
+  if (!shouldPrependOcrMessage(rawMessages)) {
+    return rawMessages;
+  }
+  return [
+    {
+      role: "user",
+      content: cleanedOcrMarkdownForCopy(state.currentMarkdown),
+      is_ocr_result: true,
+      synthetic_ocr_message: true,
+    },
+    ...rawMessages,
+  ];
+}
+
+function shouldPrependOcrMessage(messages) {
+  const ocrText = cleanedOcrMarkdownForCopy(state.currentMarkdown);
+  if (!ocrText) return false;
+  const firstMessage = Array.isArray(messages) && messages.length ? messages[0] : null;
+  if (!firstMessage || firstMessage.role !== "user") return true;
+  return cleanedOcrMarkdownForCopy(firstMessage.content) !== ocrText;
+}
+
+function mapRawMessageIndexToVisibleIndex(rawMessages, rawIndex) {
+  if (!Number.isInteger(rawIndex) || rawIndex < 0) return rawIndex;
+  return shouldPrependOcrMessage(rawMessages) ? rawIndex + 1 : rawIndex;
+}
+
+function isAssistantMessageComplete(message, index, visibleMessages) {
+  if (!message || message.role !== "assistant" || message.error) {
+    return false;
+  }
+  if (message.answer_complete === true) return true;
+  if (message.answer_complete === false) return false;
+  if (message.thinking_in_progress) return false;
+  return true;
+}
+
+function ensureDynamicChatStyles() {
+  if (document.getElementById("dynamic-chat-overrides")) {
+    return;
+  }
+  const style = document.createElement("style");
+  style.id = "dynamic-chat-overrides";
+  style.textContent = `
+    .ocr-panel {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      border-bottom: 1px solid var(--line);
+      background: rgba(247, 250, 255, 0.96);
+    }
+    .ocr-toolbar {
+      position: static !important;
+      top: auto !important;
+    }
+    body.dark .ocr-panel {
+      background: rgba(22, 32, 54, 0.96);
+    }
+    .chat-message.user .chat-bubble {
+      color: #1b2747 !important;
+      border: 1px solid #d8e1ec !important;
+      background: #ffffff !important;
+    }
+    .chat-message.user .chat-bubble code {
+      color: #1b2747 !important;
+      background: #eef2ff !important;
+    }
+    .chat-message.assistant .chat-bubble {
+      color: #1b2747 !important;
+      border: 1px solid #d8e1ec !important;
+      background: #f2f4f7 !important;
+    }
+    .chat-bubble-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 20px;
+      margin-top: 8px;
+    }
+    .chat-bubble-footer .chat-bubble-meta {
+      margin-top: 0;
+    }
+    .copy-answer-button {
+      min-height: 20px;
+      padding: 0 6px;
+      border: 1px solid var(--line-strong);
+      border-radius: 5px;
+      color: #2f426f;
+      background: linear-gradient(180deg, #ffffff, #f5f8ff);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+    }
+  `;
+  document.head.appendChild(style);
 }
 
 function on(element, eventName, handler) {

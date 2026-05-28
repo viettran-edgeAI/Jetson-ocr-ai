@@ -105,6 +105,8 @@ class AnswerResponse(BaseModel):
     total_tokens: int | None = None
     ocr_chars: int
     ocr_truncated: bool
+    stopped_due_to_max_tokens: bool = False
+    max_tokens_limit: int | None = None
 
 
 class LlamaServer:
@@ -172,11 +174,13 @@ async def answer_question(request: AnswerRequest) -> AnswerResponse:
     started = time.perf_counter()
     prepared_ocr = prepare_ocr_markdown(request.ocr_markdown)
     payload = build_chat_payload(request, prepared_ocr=prepared_ocr, stream=False)
+    max_tokens_limit = resolve_max_tokens(request)
     data = await asyncio.to_thread(post_json, "/v1/chat/completions", payload)
     elapsed_ms = int((time.perf_counter() - started) * 1000)
 
     try:
-        message = data["choices"][0]["message"]
+        first_choice = data["choices"][0]
+        message = first_choice["message"]
         answer_text, reasoning_text = extract_message_parts(message)
     except (KeyError, IndexError, TypeError) as exc:
         raise HTTPException(status_code=502, detail="Unexpected llama-server response") from exc
@@ -184,6 +188,8 @@ async def answer_question(request: AnswerRequest) -> AnswerResponse:
     if not answer_text:
         raise HTTPException(status_code=502, detail="llama-server returned an empty answer")
 
+    finish_reason = str(first_choice.get("finish_reason") or "").strip().lower()
+    stopped_due_to_max_tokens = finish_reason == "length"
     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
     return AnswerResponse(
         answer=answer_text,
@@ -195,6 +201,8 @@ async def answer_question(request: AnswerRequest) -> AnswerResponse:
         total_tokens=usage.get("total_tokens"),
         ocr_chars=prepared_ocr["original_chars"],
         ocr_truncated=prepared_ocr["truncated"],
+        stopped_due_to_max_tokens=stopped_due_to_max_tokens,
+        max_tokens_limit=max_tokens_limit,
     )
 
 
@@ -203,6 +211,7 @@ async def answer_question_stream(request: AnswerRequest) -> StreamingResponse:
     started = time.perf_counter()
     prepared_ocr = prepare_ocr_markdown(request.ocr_markdown)
     payload = build_chat_payload(request, prepared_ocr=prepared_ocr, stream=True)
+    max_tokens_limit = resolve_max_tokens(request)
 
     def stream_events() -> Generator[str, None, None]:
         answer_parts: list[str] = []
@@ -211,6 +220,7 @@ async def answer_question_stream(request: AnswerRequest) -> StreamingResponse:
         timings: dict[str, Any] = {}
         model_name = MODEL_ALIAS
         completion_chunks = 0
+        finish_reason = ""
         try:
             for chunk in post_json_stream("/v1/chat/completions", payload):
                 model_name = str(chunk.get("model") or model_name)
@@ -220,6 +230,9 @@ async def answer_question_stream(request: AnswerRequest) -> StreamingResponse:
                 chunk_timings = chunk.get("timings")
                 if isinstance(chunk_timings, dict):
                     timings = chunk_timings
+                chunk_finish_reason = extract_finish_reason(chunk)
+                if chunk_finish_reason:
+                    finish_reason = chunk_finish_reason
                 delta_parts = extract_delta_parts(chunk)
                 reasoning_delta = delta_parts["reasoning"]
                 if reasoning_delta:
@@ -254,6 +267,9 @@ async def answer_question_stream(request: AnswerRequest) -> StreamingResponse:
                 if isinstance(choices, list) and choices:
                     first_choice = choices[0]
                     if isinstance(first_choice, dict):
+                        fallback_finish_reason = str(first_choice.get("finish_reason") or "").strip().lower()
+                        if fallback_finish_reason:
+                            finish_reason = fallback_finish_reason
                         message = first_choice.get("message")
                         if isinstance(message, dict):
                             answer_text, reasoning_text = extract_message_parts(message)
@@ -275,6 +291,7 @@ async def answer_question_stream(request: AnswerRequest) -> StreamingResponse:
             completion_tokens = completion_chunks
         if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
             total_tokens = prompt_tokens + completion_tokens
+        stopped_due_to_max_tokens = finish_reason == "length"
         yield sse_event(
             "done",
             {
@@ -287,6 +304,8 @@ async def answer_question_stream(request: AnswerRequest) -> StreamingResponse:
                 "total_tokens": total_tokens,
                 "ocr_chars": prepared_ocr["original_chars"],
                 "ocr_truncated": prepared_ocr["truncated"],
+                "stopped_due_to_max_tokens": stopped_due_to_max_tokens,
+                "max_tokens_limit": max_tokens_limit,
             },
         )
 
@@ -564,6 +583,16 @@ def extract_delta_parts(chunk: dict[str, Any]) -> dict[str, str]:
         "answer": normalize_text_content(delta.get("content")),
         "reasoning": extract_text_from_fields(delta, ("reasoning", "reasoning_content")),
     }
+
+
+def extract_finish_reason(chunk: dict[str, Any]) -> str:
+    choices = chunk.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    return str(first.get("finish_reason") or "").strip().lower()
 
 
 def extract_delta_content(chunk: dict[str, Any]) -> str:
