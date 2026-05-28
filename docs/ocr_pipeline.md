@@ -11,7 +11,7 @@ Input image / PDF page
 ↓
 [2] Layout Detection 
 └─ PP-DocLayout_plus-L_infer 
-- detect: text, formula, title, image, table... depending on the supported model class 
+- detect: text, formula, title, image, table... 
 ↓
 [3] Formula Recognition
 └─ PP-FormulaNet_plus-S_infer 

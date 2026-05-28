@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 COMPOSE_ARGS=(-f docker-compose.yml)
-BUILD_IMAGES=1
+BUILD_IMAGES=0
 PUBLIC_CHECK=1
 LOCAL_TEST=0
 ENV_FILE="$SCRIPT_DIR/.env"

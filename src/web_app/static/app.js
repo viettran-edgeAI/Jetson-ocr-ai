@@ -415,7 +415,8 @@ async function submitQuickAction(mode) {
 async function askQuestion(options = {}) {
   const prompt = (options.prompt || els.promptInput.value).trim();
   const mode = options.mode ?? state.activeMode;
-  if (!prompt) {
+  const allowEmptyPrompt = !prompt && state.hasDocument && !state.currentMessages.length;
+  if (!prompt && !allowEmptyPrompt) {
     els.promptInput.focus();
     return;
   }
@@ -425,10 +426,11 @@ async function askQuestion(options = {}) {
 
   try {
     await ensureChatSession();
+    const userMessage = prompt ? [{ role: "user", content: prompt }] : [];
     const useThinkingTrace = state.thinkingMode === "thinking";
     const optimisticMessages = [
       ...state.currentMessages,
-      { role: "user", content: prompt },
+      ...userMessage,
       {
         role: "assistant",
         content: "",
@@ -503,7 +505,7 @@ async function askQuestion(options = {}) {
   } catch (error) {
     renderMessages([
       ...state.currentMessages,
-      { role: "user", content: prompt },
+      ...(prompt ? [{ role: "user", content: prompt }] : []),
       { role: "assistant", content: error.message, error: true },
     ]);
     setStatus(error.message, "error");

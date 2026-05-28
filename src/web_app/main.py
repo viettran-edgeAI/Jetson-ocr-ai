@@ -116,7 +116,7 @@ async def disable_cache_for_ui(request: Request, call_next):
 
 
 class AskRequest(BaseModel):
-    prompt: str = Field(..., min_length=1, max_length=2000)
+    prompt: str = Field(..., min_length=0, max_length=2000)
     mode: str | None = Field(default=None, max_length=64)
     thinking_mode: Literal["fast", "thinking"] = "fast"
 
@@ -589,9 +589,16 @@ async def ask_session(
 
     markdown = read_session_markdown(session)
     user_prompt = ask.prompt.strip()
+    existing_messages = session.get("messages", [])
+    validate_empty_prompt_submission(
+        user_prompt=user_prompt,
+        has_ocr=bool(markdown),
+        existing_messages=existing_messages,
+    )
     prompt = build_prompt(user_prompt, ask.mode, has_ocr=bool(markdown))
     now = utc_now()
-    store.add_message(session_id=session_id, role="user", content=user_prompt, created_at=now)
+    if user_prompt:
+        store.add_message(session_id=session_id, role="user", content=user_prompt, created_at=now)
     store.update_owned_session(
         session_id,
         identity.owner_type,
@@ -606,7 +613,7 @@ async def ask_session(
             post_answer_request,
             markdown,
             prompt,
-            message_history_for_llm(session.get("messages", [])),
+            message_history_for_llm(existing_messages),
             ask.thinking_mode,
         )
     except ServiceError as exc:
@@ -660,10 +667,17 @@ async def ask_session_stream(
 
     markdown = read_session_markdown(session)
     user_prompt = ask.prompt.strip()
+    existing_messages = session.get("messages", [])
+    validate_empty_prompt_submission(
+        user_prompt=user_prompt,
+        has_ocr=bool(markdown),
+        existing_messages=existing_messages,
+    )
     prompt = build_prompt(user_prompt, ask.mode, has_ocr=bool(markdown))
     now = utc_now()
-    history = message_history_for_llm(session.get("messages", []))
-    store.add_message(session_id=session_id, role="user", content=user_prompt, created_at=now)
+    history = message_history_for_llm(existing_messages)
+    if user_prompt:
+        store.add_message(session_id=session_id, role="user", content=user_prompt, created_at=now)
     store.update_owned_session(
         session_id,
         identity.owner_type,
@@ -1011,8 +1025,26 @@ def read_session_markdown(session: dict[str, Any]) -> str:
     return markdown
 
 
+def validate_empty_prompt_submission(
+    *,
+    user_prompt: str,
+    has_ocr: bool,
+    existing_messages: list[dict[str, Any]],
+) -> None:
+    if user_prompt:
+        return
+    if not has_ocr:
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty without OCR context.")
+    if existing_messages:
+        raise HTTPException(status_code=400, detail="Empty prompt is only allowed at the start of a session.")
+
+
 def build_prompt(prompt: str, mode: str | None, *, has_ocr: bool = True) -> str:
     cleaned = prompt.strip()
+    if not cleaned:
+        if has_ocr:
+            return "Answer the question(s) contained in the OCR text."
+        return "No question was provided. Ask the user to provide a question."
     if mode == "answer":
         if cleaned.lower() in {"answer this question", "answer the question(s)"}:
             if not has_ocr:

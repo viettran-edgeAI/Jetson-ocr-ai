@@ -153,6 +153,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Jetson OCR LLM Service", version="0.1.0", lifespan=lifespan)
+SYSTEM_PROMPT = (
+    "Answer directly and concisely. Do not repeat the question in your answer. "
+    "Use OCR Markdown context when relevant. If OCR lacks details, you may use "
+    "general knowledge and briefly state that OCR lacked details."
+)
 
 
 @app.get("/healthz")
@@ -254,9 +259,9 @@ async def answer_question_stream(request: AnswerRequest) -> StreamingResponse:
                             answer_text, reasoning_text = extract_message_parts(message)
             except HTTPException:
                 answer_text = ""
-            if not answer_text:
-                yield sse_event("error", {"detail": "llama-server returned an empty answer"})
-                return
+        if not answer_text:
+            yield sse_event("error", {"detail": "llama-server returned an empty answer"})
+            return
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         prompt_tokens = as_int_or_none(usage.get("prompt_tokens"))
@@ -355,44 +360,12 @@ def build_chat_payload(
         prepared_ocr = prepare_ocr_markdown(request.ocr_markdown)
 
     has_ocr_context = bool(prepared_ocr["text"])
-    thinking_enabled = request.thinking_mode == "thinking" and not DISABLE_THINKING
-    if has_ocr_context:
-        system_prompt = (
-            "You are a concise assistant. OCR Markdown from an attached document is "
-            "available in this session. Use it whenever the user asks about the "
-            "document or its contents. If the user asks about the attached document "
-            "and the OCR text does not contain enough evidence, say "
-            "\"insufficient evidence in OCR text\". For multiple-choice questions "
-            "from the OCR text, give the selected option and a brief reason. Use the "
-            "conversation history only to resolve follow-up references within this "
-            "same session."
-        )
-    else:
-        system_prompt = (
-            "You are a concise assistant. No OCR document context is attached to "
-            "this session yet. Answer normal chat requests directly. If the user "
-            "asks about an attached document or OCR text, say that no OCR context is "
-            "available yet and ask them to attach a document. Use the conversation "
-            "history only to resolve follow-up references within this same session."
-        )
-    if thinking_enabled:
-        system_prompt = (
-            f"{system_prompt} Thinking mode is active. Keep any visible reasoning "
-            "stream concise and user-facing: mention only the key evidence checked, "
-            "the decision point, and the next step. Do not expose hidden "
-            "chain-of-thought or raw <think> tags."
-        )
-    else:
-        system_prompt = (
-            f"{system_prompt} Do not include hidden reasoning, chain-of-thought, "
-            "or <think> text."
-        )
     truncation_note = ""
     if prepared_ocr["truncated"]:
         truncation_note = (
             "\n\nNote: OCR Markdown was truncated to fit the configured context cap."
         )
-    system_content = system_prompt
+    system_content = SYSTEM_PROMPT
     if has_ocr_context:
         ocr_context = (
             "OCR Markdown appended to this session:\n"
@@ -401,7 +374,7 @@ def build_chat_payload(
             "```"
             f"{truncation_note}"
         )
-        system_content = f"{system_prompt}\n\n{ocr_context}"
+        system_content = f"{SYSTEM_PROMPT}\n\n{ocr_context}"
 
     messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
     messages.extend(prepare_conversation_history(request.conversation_history))
