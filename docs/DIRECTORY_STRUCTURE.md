@@ -4,8 +4,9 @@ Keep this document brief and update it whenever folders change.
 
 | Path | Purpose |
 | --- | --- |
-| `/` | Project root for runtime entrypoints, Docker files, and the top-level README. |
-| `docs/` | Project documentation, including structure notes, design history, and service/interface docs. |
+| `/` | Project root for runtime entrypoints, Docker files, and the short landing `README.md`. |
+| `docs/` | Project documentation, including structure notes, design history, service/interface docs, and the archived base README. |
+| `docs/base_doc.md` | Archived project README content moved out of the root to keep the landing page lightweight. |
 | `docs/ocr_service.md` | OCR service architecture, API, and pipeline document. |
 | `docs/llm_service.md` | LLM service architecture, API, and prompt contract document. |
 | `docs/web_app.md` | Web-app session interface and system design document. |
