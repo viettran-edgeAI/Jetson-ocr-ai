@@ -5,7 +5,15 @@
 </p>
 
 <p align="center">
+  <a href="https://jetsonocrai.cc">jetsonocrai.cc</a>
+</p>
+
+<p align="center">
   <img src="./docs/ocr_ai_demo.gif" alt="OCR AI demo" width="960" />
+</p>
+
+<p align="center">
+  An application for quick and simple OCR operations, quick quizzes, and multilingual translation.
 </p>
 
 <p align="center">
