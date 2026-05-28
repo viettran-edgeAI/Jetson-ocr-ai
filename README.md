@@ -16,14 +16,6 @@
 
 OCR AI Assistant is a lightweight local OCR + LLM application built for fast document reading tasks. It extracts text from images and documents, helps answer short questions or multiple-choice quizzes, and translates OCR results across languages.
 
-## Key Features
-
-- **Fast OCR extraction** from images and simple PDF pages.
-- **Quick Q&A** for short questions, quizzes, and multiple-choice prompts.
-- **Multilingual translation** for OCR text and user prompts.
-- **Formula-aware recognition** for documents that contain mathematical expressions.
-- **Local-first deployment** with separate web, OCR, and LLM services.
-
 ## Best For
 
 - Screenshots, notes, exercises, and scanned pages.
