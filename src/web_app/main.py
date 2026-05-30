@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib import error, request
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -82,6 +82,8 @@ ALLOWED_CONTENT_TYPES = {
 CHAT_CONTENT_TYPE = "application/x-chat-session"
 CHAT_SESSION_FILENAME = "Untitled chat"
 ASKABLE_STATUSES = {"chat_ready", "ocr_complete", "answered", "llm_failed", "ocr_failed"}
+RECENT_SESSIONS_DEFAULT_LIMIT = 8
+MAX_STORED_SESSIONS = 50
 OCR_UPLOAD_ACTION = "ocr_upload"
 OCR_UPLOAD_LIMITS = {
     "guest": 10,
@@ -338,12 +340,18 @@ async def account_details(identity: Identity = Depends(current_identity)) -> dic
 
 
 @app.get("/sessions/recent")
-async def recent_sessions(identity: Identity = Depends(current_identity)) -> dict[str, list[dict[str, Any]]]:
+async def recent_sessions(
+    include_all: bool = Query(default=False),
+    identity: Identity = Depends(current_identity),
+) -> dict[str, list[dict[str, Any]]]:
     identity = coerce_identity(identity)
+    prune_sessions_for_identity(identity)
+    limit = MAX_STORED_SESSIONS if include_all else RECENT_SESSIONS_DEFAULT_LIMIT
     return {
         "sessions": [
             serialize_session_summary(row)
             for row in store.recent_sessions(
+                limit=limit,
                 owner_type=identity.owner_type,
                 owner_id=identity.owner_id,
             )
@@ -366,6 +374,7 @@ async def create_chat_session(identity: Identity = Depends(current_identity)) ->
         created_at=now,
         status="chat_ready",
     )
+    prune_sessions_for_identity(identity)
     return serialize_session_detail(session)
 
 
@@ -511,6 +520,7 @@ async def upload_document(
             original_path=original_path,
             created_at=now,
         )
+        prune_sessions_for_identity(identity)
         store.update_owned_session(
             session_id,
             identity.owner_type,
@@ -1348,6 +1358,16 @@ def delete_session_artifacts(session: dict[str, Any]) -> None:
     for path_value in (session.get("original_path"), session.get("ocr_markdown_path")):
         if path_value:
             Path(path_value).unlink(missing_ok=True)
+
+
+def prune_sessions_for_identity(identity: Identity) -> None:
+    pruned = store.prune_owned_sessions(
+        owner_type=identity.owner_type,
+        owner_id=identity.owner_id,
+        keep_count=MAX_STORED_SESSIONS,
+    )
+    for session in pruned:
+        delete_session_artifacts(session)
 
 
 def has_session_document(session: dict[str, Any]) -> bool:

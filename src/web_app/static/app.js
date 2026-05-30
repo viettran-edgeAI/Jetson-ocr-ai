@@ -12,6 +12,7 @@ const state = {
   selectionMode: false,
   selectedSessionIds: new Set(),
   recentSessionIds: [],
+  showAllSessions: false,
   account: null,
   accountDetails: null,
   rateLimit: null,
@@ -257,7 +258,10 @@ function bindEvents() {
   on(els.cancelSelectionButton, "click", exitSelectionMode);
   on(els.deleteSelectedButton, "click", deleteSelectedSessions);
 
-  on(els.viewAllButton, "click", loadRecentSessions);
+  on(els.viewAllButton, "click", () => {
+    state.showAllSessions = true;
+    loadRecentSessions();
+  });
   on(els.authCloseButton, "click", closeAuthModal);
   on(els.authForm, "submit", submitAuthForm);
   on(els.accountCloseButton, "click", closeAccountModal);
@@ -521,7 +525,8 @@ async function askQuestion(options = {}) {
 
 async function loadRecentSessions() {
   try {
-    const response = await fetch("/sessions/recent");
+    const query = state.showAllSessions ? "?include_all=1" : "";
+    const response = await fetch(`/sessions/recent${query}`);
     const data = await readJsonResponse(response);
     renderRecentSessions(data.sessions || []);
   } catch (error) {

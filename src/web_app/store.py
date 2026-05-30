@@ -894,6 +894,36 @@ class SessionStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def prune_owned_sessions(
+        self,
+        *,
+        owner_type: str,
+        owner_id: str,
+        keep_count: int,
+    ) -> list[dict[str, Any]]:
+        if keep_count < 0:
+            keep_count = 0
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM sessions
+                WHERE owner_type = ? AND owner_id = ?
+                ORDER BY updated_at DESC, created_at DESC, id DESC
+                LIMIT -1 OFFSET ?
+                """,
+                (owner_type, owner_id, keep_count),
+            ).fetchall()
+            pruned = [dict(row) for row in rows]
+            for row in rows:
+                session_id = str(row["id"])
+                connection.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+                connection.execute(
+                    "DELETE FROM sessions WHERE id = ? AND owner_type = ? AND owner_id = ?",
+                    (session_id, owner_type, owner_id),
+                )
+        return pruned
+
     def count_rate_limit_events(
         self,
         *,
