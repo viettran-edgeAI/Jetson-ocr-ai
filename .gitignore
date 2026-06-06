@@ -11,3 +11,6 @@ models/llm/
 # models/**/.cache/
 data/
 wheels/
+tests/
+test_set/
+scripts/
