@@ -41,7 +41,7 @@ COPY third_party/llama-bin/bin /opt/llama.cpp/build/bin
 
 WORKDIR /app
 
-COPY requirements-llm.txt /app/requirements-llm.txt
+COPY requirements/llm.txt /app/requirements-llm.txt
 RUN python3 -m pip install --upgrade pip setuptools wheel \
     && python3 -m pip install -r /app/requirements-llm.txt
 

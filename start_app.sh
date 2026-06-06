@@ -34,12 +34,12 @@ compute_sha256() {
 
 dependency_input_files() {
   local -a files=(
-    "Dockerfile"
-    "Dockerfile.llm"
-    "Dockerfile.web"
-    "requirements.txt"
-    "requirements-llm.txt"
-    "requirements-web.txt"
+    "docker/Dockerfile"
+    "docker/Dockerfile.llm"
+    "docker/Dockerfile.web"
+    "requirements/ocr.txt"
+    "requirements/llm.txt"
+    "requirements/web.txt"
   )
   local wheel
   shopt -s nullglob
@@ -103,7 +103,7 @@ Usage: ./start_app.sh [--build] [--rebuild-deps] [--no-build] [--skip-public-che
 Options:
   --build               Rebuild images with normal Docker layer caching.
   --rebuild-deps        Rebuild images and refresh dependency layers.
-  --no-build            Start using existing images only.
+  --no-build            Recreate containers without rebuilding images.
   --skip-public-check   Skip https://jetsonocrai.cc readiness check.
   --local_test          Local mode: WEB_APP_COOKIE_SECURE=0 and skip public check.
   -h, --help            Show this help message.
@@ -256,9 +256,8 @@ if (( BUILD_IMAGES == 1 )); then
   fi
 else
   unset DEPS_CACHE_BUSTER || true
-  log "Starting OCR stack with Docker Compose (no rebuild)..."
-  warn "Using --no-build may run older frontend code from existing images."
-  if ! docker compose "${COMPOSE_ARGS[@]}" up -d; then
+  log "Starting OCR stack with Docker Compose (no rebuild, recreate containers)..."
+  if ! docker compose "${COMPOSE_ARGS[@]}" up -d --force-recreate; then
     report_failure_and_cleanup "Compose startup failed."
   fi
 fi

@@ -26,8 +26,10 @@ Local OCR + LLM system for a Jetson Orin Nano Super.
 
 - `docs/`: project documentation
 - `configs/`: model-path configuration files for host and container runtimes
+- `docker/`: service Dockerfiles and related build assets
 - `data/`: runtime uploads, OCR outputs, SQLite state, and other local artifacts
 - external models: stored in `/home/viettran_orin/models`
+- `requirements/`: grouped Python dependency files by service
 - `third_party/`: packaged host runtime dependencies such as `llama.cpp` binaries
 
 ## Running the stack
@@ -56,7 +58,9 @@ Useful flags:
 
 `--build` rebuilds images with normal Docker layer caching. Use `--rebuild-deps` only when dependency installation layers should be refreshed.
 
-`start_app.sh` also tracks dependency inputs locally and warns when `requirements*.txt`, Dockerfiles, or the Paddle wheel input changed since the last successful `--rebuild-deps`.
+Source code under `src/` is bind-mounted into the containers for local development, so code-only changes can usually be picked up with `./start_app.sh --no-build`.
+
+`start_app.sh` also tracks dependency inputs locally and warns when files in `requirements/`, the service Dockerfiles in `docker/`, or the Paddle wheel input changed since the last successful `--rebuild-deps`.
 
 Stop the stack:
 

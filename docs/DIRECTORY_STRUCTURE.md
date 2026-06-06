@@ -4,7 +4,7 @@ Keep this document brief and update it whenever folders change.
 
 | Path | Purpose |
 | --- | --- |
-| `/` | Project root for runtime entrypoints, Docker files, and the short landing `README.md`. |
+| `/` | Project root for runtime entrypoints, Compose wiring, helper scripts, and the short landing `README.md`. |
 | `docs/` | Project documentation, including structure notes, design history, service/interface docs, and the archived base README. |
 | `configs/` | Runtime configuration files, including model path pointers for host and container runs. |
 | `configs/models.host.env` | Host-side model path pointers for local Python runs outside Docker. |
@@ -27,9 +27,16 @@ Keep this document brief and update it whenever folders change.
 | `/home/viettran_orin/models/llm/` | Local GGUF model storage for `llm-service`. |
 | `wheels/` | Jetson-compatible PaddlePaddle wheel storage and notes. |
 | `third_party/` | Packaged third-party runtime dependencies bundled into images. |
-| `third_party/llama-bin/bin/` | Validated host `llama.cpp` runtime artifacts copied into `Dockerfile.llm`. |
-| `docker/` | Additional Docker build packages and alternate image definitions. |
+| `third_party/llama-bin/bin/` | Validated host `llama.cpp` runtime artifacts copied into `docker/Dockerfile.llm`. |
+| `docker/` | Container build recipes and supporting Docker assets. |
+| `docker/Dockerfile` | Jetson OCR service image recipe. |
+| `docker/Dockerfile.llm` | Jetson LLM service image recipe. |
+| `docker/Dockerfile.web` | Web-app image recipe. |
 | `docker/paddleocr-l4t-base/` | Minimal OCR image package based on `l4t-base` plus the PaddleOCR runtime. |
+| `requirements/` | Python dependency sets grouped by service. |
+| `requirements/ocr.txt` | Python dependencies for `ocr-service`. |
+| `requirements/llm.txt` | Python dependencies for `llm-service`. |
+| `requirements/web.txt` | Python dependencies for `web-app`. |
 | `scripts/` | Local helper scripts for OCR diagnostics, benchmarking, and visualization. |
 | `scripts/measure_pipeline_baseline.py` | End-to-end baseline timing script for OCR pipeline runs on local fixtures. |
 | `src/` | Application source code. |
@@ -47,13 +54,7 @@ Keep this document brief and update it whenever folders change.
 | `src/web_app/main.py` | FastAPI app for uploads, session restore, OCR calls, and LLM calls. |
 | `src/web_app/store.py` | SQLite session and message persistence helper. |
 | `src/web_app/static/` | Static HTML, CSS, and JavaScript for the OCR AI Assistant interface. |
-| `Dockerfile` | Jetson OCR service image recipe. |
-| `Dockerfile.llm` | Jetson LLM service image recipe. |
-| `Dockerfile.web` | Web-app image recipe. |
 | `docker-compose.yml` | Main local service wiring. |
-| `requirements.txt` | Python dependencies for `ocr-service`. |
-| `requirements-llm.txt` | Python dependencies for `llm-service`. |
-| `requirements-web.txt` | Python dependencies for `web-app`. |
 | `start_app.sh` | Start helper for the multi-container runtime with readiness checks. |
 | `stop_app.sh` | Stop helper for the running stack. |
 | `latest_run_log.txt` | Local captured build or runtime log; disposable and not part of the application runtime contract. |

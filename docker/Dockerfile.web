@@ -16,7 +16,7 @@ ARG DEPS_CACHE_BUSTER=0
 
 WORKDIR /app
 
-COPY requirements-web.txt /app/requirements-web.txt
+COPY requirements/web.txt /app/requirements-web.txt
 RUN echo "Dependency rebuild marker: ${DEPS_CACHE_BUSTER}" >/dev/null \
     && python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install -r /app/requirements-web.txt

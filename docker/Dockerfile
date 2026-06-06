@@ -36,7 +36,7 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY wheels/paddlepaddle_gpu-*.whl /tmp/paddle-wheel/
-COPY requirements.txt /app/requirements.txt
+COPY requirements/ocr.txt /app/requirements.txt
 RUN python3 -m pip install --upgrade pip setuptools wheel \
     && python3 -m pip install /tmp/paddle-wheel/*.whl \
     && python3 -m pip install -r /app/requirements.txt

@@ -3,12 +3,13 @@ services:
     image: jetson-ocr-web:local
     build:
       context: .
-      dockerfile: Dockerfile.web
+      dockerfile: docker/Dockerfile.web
       args:
         DEPS_CACHE_BUSTER: ${DEPS_CACHE_BUSTER:-0}
     ports:
       - "8080:8080"
     volumes:
+      - ./src:/app/src:ro
       - ./data:/app/data
     environment:
       WEB_APP_DATA_DIR: /app/data/web_app
@@ -33,7 +34,7 @@ services:
   ocr:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
       args:
         DEPS_CACHE_BUSTER: ${DEPS_CACHE_BUSTER:-0}
     runtime: nvidia
@@ -45,6 +46,7 @@ services:
     expose:
       - "8000"
     volumes:
+      - ./src:/app/src:ro
       - ${HOME}/models:/models:ro
       - ./data:/app/data
     environment:
@@ -69,7 +71,7 @@ services:
     image: jetson-ocr-llm:local
     build:
       context: .
-      dockerfile: Dockerfile.llm
+      dockerfile: docker/Dockerfile.llm
       args:
         DEPS_CACHE_BUSTER: ${DEPS_CACHE_BUSTER:-0}
     runtime: nvidia
@@ -78,6 +80,7 @@ services:
     expose:
       - "8081"
     volumes:
+      - ./src:/app/src:ro
       - ${HOME}/models:/models:ro
     environment:
       NVIDIA_VISIBLE_DEVICES: all
