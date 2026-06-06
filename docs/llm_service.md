@@ -42,7 +42,7 @@ Package marker only.
 
 The default model path is:
 
-- `models/llm/gemma-4-E2B-it-Q4_K_M.gguf`
+- `models/llm/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf`
 
 This can be overridden with:
 

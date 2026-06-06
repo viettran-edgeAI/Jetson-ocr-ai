@@ -24,7 +24,7 @@ APP_ROOT = Path(__file__).resolve().parents[2]
 MODEL_PATH = Path(
     os.environ.get(
         "LLM_MODEL_PATH",
-        APP_ROOT / "models" / "llm" / "gemma-4-E2B-it-Q4_K_M.gguf",
+        APP_ROOT / "models" / "llm" / "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf",
     )
 )
 LLAMA_SERVER_BIN = os.environ.get("LLAMA_SERVER_BIN", "llama-server")
