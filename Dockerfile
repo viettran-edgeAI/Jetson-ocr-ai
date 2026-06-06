@@ -9,19 +9,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONPATH=/app/src \
     OCR_PROFILE=fast \
     OCR_ENGINE=paddle_static \
-    OCR_DOC_ORI_MODEL_DIR=/models/PP-LCNet_x1_0_doc_ori_infer \
-    OCR_DOC_UNWARP_MODEL_DIR=/models/UVDoc_infer \
-    OCR_TEXTLINE_ORI_MODEL_DIR=/models/PP-LCNet_x0_25_textline_ori_infer \
-    OCR_DET_MODEL_DIR=/models/PP-OCRv5_mobile_det_infer \
-    OCR_REC_MODEL_DIR=/models/PP-OCRv5_mobile_rec_infer \
-    OCR_LAYOUT_MODEL_DIR=/models/PP-DocLayout_plus-L_infer \
-    OCR_REGION_MODEL_DIR=/models/PP-DocBlockLayout_infer \
-    OCR_FORMULA_MODEL_DIR=/models/PP-FormulaNet_plus-S_infer \
     OCR_USE_DOCUMENT_STRUCTURE=1 \
     OCR_TEXT_RECOGNITION_BATCH_SIZE=4 \
     OCR_DATA_DIR=/app/data
 
+ARG DEPS_CACHE_BUSTER=0
+
 RUN apt-get update \
+    && echo "Dependency rebuild marker: ${DEPS_CACHE_BUSTER}" >/dev/null \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         libglib2.0-0 \

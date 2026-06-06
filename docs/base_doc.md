@@ -48,10 +48,15 @@ Useful flags:
 
 ```bash
 ./start_app.sh --build
+./start_app.sh --rebuild-deps
 ./start_app.sh --no-build
 ./start_app.sh --skip-public-check
 ./start_app.sh --local_test
 ```
+
+`--build` rebuilds images with normal Docker layer caching. Use `--rebuild-deps` only when dependency installation layers should be refreshed.
+
+`start_app.sh` also tracks dependency inputs locally and warns when `requirements*.txt`, Dockerfiles, or the Paddle wheel input changed since the last successful `--rebuild-deps`.
 
 Stop the stack:
 

@@ -10,7 +10,7 @@ from runtime_env import load_default_model_env
 load_default_model_env()
 
 def default_model_dir(name: str) -> Path:
-    return Path.home() / "models" / name
+    return Path.home() / "models" / "ocr" / name
 
 
 def env_int(names: tuple[str, ...], default: int) -> int:

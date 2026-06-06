@@ -9,7 +9,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONPATH=/app/src \
     LLM_HOST=0.0.0.0 \
     LLM_PORT=8081 \
-    LLM_MODEL_PATH=/models/llm/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf \
     LLAMA_SERVER_BIN=/opt/llama.cpp/build/bin/llama-server \
     LLM_CTX_SIZE=8192 \
     LLM_MAX_OCR_CHARS=6000 \
@@ -27,7 +26,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LLM_DISABLE_THINKING=1 \
     LD_LIBRARY_PATH=/opt/llama.cpp/build/bin:/usr/local/cuda/lib64:/usr/lib/aarch64-linux-gnu/nvidia:${LD_LIBRARY_PATH}
 
+ARG DEPS_CACHE_BUSTER=0
+
 RUN apt-get update \
+    && echo "Dependency rebuild marker: ${DEPS_CACHE_BUSTER}" >/dev/null \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         libgomp1 \

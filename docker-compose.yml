@@ -4,6 +4,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.web
+      args:
+        DEPS_CACHE_BUSTER: ${DEPS_CACHE_BUSTER:-0}
     ports:
       - "8080:8080"
     volumes:
@@ -29,7 +31,11 @@ services:
         condition: service_healthy
 
   ocr:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DEPS_CACHE_BUSTER: ${DEPS_CACHE_BUSTER:-0}
     runtime: nvidia
     env_file:
       - ./configs/models.container.env
@@ -64,6 +70,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.llm
+      args:
+        DEPS_CACHE_BUSTER: ${DEPS_CACHE_BUSTER:-0}
     runtime: nvidia
     env_file:
       - ./configs/models.container.env
