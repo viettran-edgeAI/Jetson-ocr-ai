@@ -25,8 +25,9 @@ Local OCR + LLM system for a Jetson Orin Nano Super.
 ## Runtime layout
 
 - `docs/`: project documentation
+- `configs/`: model-path configuration files for host and container runtimes
 - `data/`: runtime uploads, OCR outputs, SQLite state, and other local artifacts
-- `models/`: local OCR and LLM model files
+- external models: stored in `/home/viettran_orin/models`
 - `third_party/`: packaged host runtime dependencies such as `llama.cpp` binaries
 
 ## Running the stack

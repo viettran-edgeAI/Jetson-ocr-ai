@@ -42,3 +42,10 @@ The application is split into three main services:
 ## Documentation
 
 For system design, service details, and workspace layout, see [docs/](./docs/).
+
+## Model Configuration
+
+Runtime model files are stored outside the repo in `/home/viettran_orin/models`.
+
+- `configs/models.host.env` points local host runs to that model root.
+- `configs/models.container.env` points Docker services to the same model root mounted at `/models`.

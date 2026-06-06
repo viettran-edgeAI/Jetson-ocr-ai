@@ -6,7 +6,7 @@ This document describes the internal OCR service in `src/ocr_service/`: what it 
 
 `ocr-service` is the private OCR backend for the Jetson stack. It accepts a single uploaded image or PDF, runs the replacement Jetson OCR pipeline locally, converts the result into Markdown, and returns that Markdown to the caller.
 
-The current implementation keeps the existing `POST /v1/ocr` contract used by `web-app`, but the internals now follow the newer document pipeline from `models/new_ocr_pipeline.md`: image/PDF page loading, optional document orientation and unwarping, layout detection, formula recognition, formula masking, general text OCR, reading-order merge, and Markdown assembly.
+The current implementation keeps the existing `POST /v1/ocr` contract used by `web-app`, but the internals now follow the newer document pipeline design: image/PDF page loading, optional document orientation and unwarping, layout detection, formula recognition, formula masking, general text OCR, reading-order merge, and Markdown assembly.
 
 It is designed to be used by `web-app` over the internal Docker network, not directly from the public internet.
 
@@ -97,16 +97,18 @@ Package marker only.
 
 ## Runtime Models
 
-The pipeline loads local PaddleOCR model snapshots from `models/` by default:
+The pipeline reads model-directory pointers from `configs/models.host.env` for local runs, and from `configs/models.container.env` in Docker Compose.
 
-- `models/PP-LCNet_x1_0_doc_ori_infer/`
-- `models/UVDoc_infer/`
-- `models/PP-LCNet_x0_25_textline_ori_infer/`
-- `models/PP-OCRv5_mobile_det_infer/`
-- `models/PP-OCRv5_mobile_rec_infer/`
-- `models/PP-DocLayout_plus-L_infer/`
-- `models/PP-DocBlockLayout_infer/`
-- `models/PP-FormulaNet_plus-S_infer/`
+The current external PaddleOCR model directories are:
+
+- `/home/viettran_orin/models/PP-LCNet_x1_0_doc_ori_infer/`
+- `/home/viettran_orin/models/UVDoc_infer/`
+- `/home/viettran_orin/models/PP-LCNet_x0_25_textline_ori_infer/`
+- `/home/viettran_orin/models/PP-OCRv5_mobile_det_infer/`
+- `/home/viettran_orin/models/PP-OCRv5_mobile_rec_infer/`
+- `/home/viettran_orin/models/PP-DocLayout_plus-L_infer/`
+- `/home/viettran_orin/models/PP-DocBlockLayout_infer/`
+- `/home/viettran_orin/models/PP-FormulaNet_plus-S_infer/`
 
 These can be overridden with environment variables:
 
@@ -175,7 +177,7 @@ The main runtime path is:
 
 ### Document-structure stages
 
-Enable the structure-aware path from `models/new_ocr_pipeline.md` with:
+Enable the structure-aware pipeline path with:
 
 ```bash
 OCR_USE_DOCUMENT_STRUCTURE=1

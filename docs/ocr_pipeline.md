@@ -64,7 +64,7 @@ Typical model:
 - `PP-LCNet_x1_0_doc_ori`
 
 Place:
-- `models/PP-LCNet_x1_0_doc_ori_infer/`
+- `/home/viettran_orin/models/PP-LCNet_x1_0_doc_ori_infer/`
 
 Supported classes:
 
@@ -126,7 +126,7 @@ Typical model:
 - `UVDoc`
 
 Place:
-- `models/UVDoc_infer`
+- `/home/viettran_orin/models/UVDoc_infer`
 
 ### Input
 
@@ -180,8 +180,8 @@ Model:
 - `PP-DocBlockLayout`
 
 Place:
-- `models/PP_DocLayout-M_infer/`
-- `models/PP-DocBlockLayout_infer/`
+- `/home/viettran_orin/models/PP_DocLayout-M_infer/`
+- `/home/viettran_orin/models/PP-DocBlockLayout_infer/`
 
 ### Input
 
@@ -246,7 +246,7 @@ Typical formula models include:
 - `PP-FormulaNet_plus-S`
 
 Place:
-- `models/PP-FormulaNet_plus-S_infer/`
+- `/home/viettran_orin/models/PP-FormulaNet_plus-S_infer/`
 
 ### Input
 
@@ -334,7 +334,7 @@ Model:
 - `PP-OCRv5_mobile_det`
 
 PLace:
-- `models/PP-OCRv5_mobile_det/`
+- `/home/viettran_orin/models/PP-OCRv5_mobile_det/`
 
 ### Input
 
@@ -395,7 +395,7 @@ Model:
 - `PP-LCNet_x0_25_textline_ori`
 
 Place:
-- `models/PP-LCNet_x0_25_textline_ori_infer/`
+- `/home/viettran_orin/models/PP-LCNet_x0_25_textline_ori_infer/`
 
 Supported classes:
 
@@ -457,7 +457,7 @@ Model:
 - `PP-OCRv5_mobile_rec`
 
 Place:
-- `models/PP-OCRv5_mobile_rec/`
+- `/home/viettran_orin/models/PP-OCRv5_mobile_rec/`
 
 ### Input
 

@@ -6,22 +6,25 @@ Keep this document brief and update it whenever folders change.
 | --- | --- |
 | `/` | Project root for runtime entrypoints, Docker files, and the short landing `README.md`. |
 | `docs/` | Project documentation, including structure notes, design history, service/interface docs, and the archived base README. |
+| `configs/` | Runtime configuration files, including model path pointers for host and container runs. |
+| `configs/models.host.env` | Host-side model path pointers for local Python runs outside Docker. |
+| `configs/models.container.env` | Container-side model path pointers used by `docker-compose.yml`. |
 | `docs/base_doc.md` | Archived project README content moved out of the root to keep the landing page lightweight. |
 | `docs/ocr_service.md` | OCR service architecture, API, and pipeline document. |
 | `docs/llm_service.md` | LLM service architecture, API, and prompt contract document. |
 | `docs/web_app.md` | Web-app session interface and system design document. |
 | `data/` | Runtime uploads, OCR outputs, SQLite state, and other local artifacts generated during development or app usage. |
 | `data/web_app/` | Web-app runtime data, including uploads, OCR Markdown artifacts, auth outbox, and the session database. |
-| `models/` | Local OCR and LLM model snapshots and metadata. |
-| `models/PP-OCRv5_mobile_det_infer/` | PP-OCRv5 text detection files for the replacement OCR pipeline. |
-| `models/PP-OCRv5_mobile_rec_infer/` | PP-OCRv5 text recognition files for the replacement OCR pipeline. |
-| `models/PP-LCNet_x0_25_textline_ori_infer/` | PP-LCNet text line orientation files. |
-| `models/PP-LCNet_x1_0_doc_ori_infer/` | PP-LCNet document orientation files. |
-| `models/UVDoc_infer/` | UVDoc document layout analysis files. |
-| `models/PP-DocLayout_plus-L_infer/` | Layout detection files used by the replacement OCR pipeline. |
-| `models/PP-DocBlockLayout_infer/` | Region/block detection files used by the replacement OCR pipeline. |
-| `models/PP-FormulaNet_plus-S_infer/` | Formula recognition files used by the replacement OCR pipeline. |
-| `models/llm/` | Local GGUF model storage for `llm-service`. |
+| `/home/viettran_orin/models/` | External OCR and LLM model storage kept outside the repository. |
+| `/home/viettran_orin/models/PP-OCRv5_mobile_det_infer/` | PP-OCRv5 text detection files for the replacement OCR pipeline. |
+| `/home/viettran_orin/models/PP-OCRv5_mobile_rec_infer/` | PP-OCRv5 text recognition files for the replacement OCR pipeline. |
+| `/home/viettran_orin/models/PP-LCNet_x0_25_textline_ori_infer/` | PP-LCNet text line orientation files. |
+| `/home/viettran_orin/models/PP-LCNet_x1_0_doc_ori_infer/` | PP-LCNet document orientation files. |
+| `/home/viettran_orin/models/UVDoc_infer/` | UVDoc document layout analysis files. |
+| `/home/viettran_orin/models/PP-DocLayout_plus-L_infer/` | Layout detection files used by the replacement OCR pipeline. |
+| `/home/viettran_orin/models/PP-DocBlockLayout_infer/` | Region/block detection files used by the replacement OCR pipeline. |
+| `/home/viettran_orin/models/PP-FormulaNet_plus-S_infer/` | Formula recognition files used by the replacement OCR pipeline. |
+| `/home/viettran_orin/models/llm/` | Local GGUF model storage for `llm-service`. |
 | `wheels/` | Jetson-compatible PaddlePaddle wheel storage and notes. |
 | `third_party/` | Packaged third-party runtime dependencies bundled into images. |
 | `third_party/llama-bin/bin/` | Validated host `llama.cpp` runtime artifacts copied into `Dockerfile.llm`. |

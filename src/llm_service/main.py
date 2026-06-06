@@ -18,13 +18,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from runtime_env import load_default_model_env
 
-APP_ROOT = Path(__file__).resolve().parents[2]
+load_default_model_env()
 
 MODEL_PATH = Path(
     os.environ.get(
         "LLM_MODEL_PATH",
-        APP_ROOT / "models" / "llm" / "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf",
+        Path.home() / "models" / "llm" / "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf",
     )
 )
 LLAMA_SERVER_BIN = os.environ.get("LLAMA_SERVER_BIN", "llama-server")

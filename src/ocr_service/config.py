@@ -4,10 +4,13 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from runtime_env import load_default_model_env
+
+
+load_default_model_env()
 
 def default_model_dir(name: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    return repo_root / "models" / name
+    return Path.home() / "models" / name
 
 
 def env_int(names: tuple[str, ...], default: int) -> int:

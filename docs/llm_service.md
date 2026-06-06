@@ -42,11 +42,13 @@ Package marker only.
 
 The default model path is:
 
-- `models/llm/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf`
+- `/home/viettran_orin/models/llm/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf`
 
 This can be overridden with:
 
 - `LLM_MODEL_PATH`
+
+Local host runs read `configs/models.host.env` by default. Docker Compose loads `configs/models.container.env` and mounts the same external model root at `/models`.
 
 The service starts `llama-server` unless an external server is configured.
 

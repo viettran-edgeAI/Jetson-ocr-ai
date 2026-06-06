@@ -31,27 +31,21 @@ services:
   ocr:
     build: .
     runtime: nvidia
+    env_file:
+      - ./configs/models.container.env
     depends_on:
       llm:
         condition: service_healthy
     expose:
       - "8000"
     volumes:
-      - ./models:/app/models:ro
+      - ${HOME}/models:/models:ro
       - ./data:/app/data
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
       OCR_PROFILE: fast
       OCR_ENGINE: paddle_static
-      OCR_DOC_ORI_MODEL_DIR: /app/models/PP-LCNet_x1_0_doc_ori_infer
-      OCR_DOC_UNWARP_MODEL_DIR: /app/models/UVDoc_infer
-      OCR_TEXTLINE_ORI_MODEL_DIR: /app/models/PP-LCNet_x0_25_textline_ori_infer
-      OCR_DET_MODEL_DIR: /app/models/PP-OCRv5_mobile_det_infer
-      OCR_REC_MODEL_DIR: /app/models/PP-OCRv5_mobile_rec_infer
-      OCR_LAYOUT_MODEL_DIR: /app/models/PP-DocLayout_plus-L_infer
-      OCR_REGION_MODEL_DIR: /app/models/PP-DocBlockLayout_infer
-      OCR_FORMULA_MODEL_DIR: /app/models/PP-FormulaNet_plus-S_infer
       OCR_USE_DOCUMENT_STRUCTURE: "1"
       OCR_TEXT_RECOGNITION_BATCH_SIZE: 4
       OCR_DATA_DIR: /app/data
@@ -71,14 +65,15 @@ services:
       context: .
       dockerfile: Dockerfile.llm
     runtime: nvidia
+    env_file:
+      - ./configs/models.container.env
     expose:
       - "8081"
     volumes:
-      - ./models/llm:/app/models/llm:ro
+      - ${HOME}/models:/models:ro
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
-      LLM_MODEL_PATH: /app/models/llm/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf
       LLAMA_SERVER_BIN: /opt/llama.cpp/build/bin/llama-server
       LD_LIBRARY_PATH: /opt/llama.cpp/build/bin:/usr/local/cuda/lib64:/usr/lib/aarch64-linux-gnu/nvidia
       LLM_CTX_SIZE: 8192
