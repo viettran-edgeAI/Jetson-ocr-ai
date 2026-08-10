@@ -486,6 +486,7 @@ async function askQuestion(options = {}) {
         optimisticMessages[assistantIndex].prompt_tokens = toFiniteNumberOrUndefined(data?.prompt_tokens);
         optimisticMessages[assistantIndex].completion_tokens = toFiniteNumberOrUndefined(data?.completion_tokens);
         optimisticMessages[assistantIndex].total_tokens = toFiniteNumberOrUndefined(data?.total_tokens);
+        optimisticMessages[assistantIndex].tokens_per_second = toFiniteNumberOrUndefined(data?.tokens_per_second);
         if (data?.session && typeof data.session === "object") {
           finalSession = data.session;
         }
@@ -1209,6 +1210,10 @@ function closeThinkingModeMenu() {
 }
 
 function answerSpeedText(message) {
+  const backendRate = Number(message.tokens_per_second);
+  if (Number.isFinite(backendRate) && backendRate > 0) {
+    return `${Math.round(backendRate)} tok/s`;
+  }
   const elapsedMs = Number(message.elapsed_ms);
   if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return "";
   const completionTokens = Number(message.completion_tokens);

@@ -35,7 +35,7 @@ LLAMA_SERVER_URL = os.environ.get("LLAMA_SERVER_URL", f"http://{LLAMA_HOST}:{LLA
 LLM_HOST = os.environ.get("LLM_HOST", "0.0.0.0")
 LLM_PORT = int(os.environ.get("LLM_PORT", "8081"))
 
-DEFAULT_CTX_SIZE = int(os.environ.get("LLM_CTX_SIZE", "12288"))
+DEFAULT_CTX_SIZE = int(os.environ.get("LLM_CTX_SIZE", "49152"))
 DEFAULT_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "160"))
 DEFAULT_THINKING_MAX_TOKENS = int(
     os.environ.get("LLM_THINKING_MAX_TOKENS", os.environ.get("LLM_MAX_TOKENS_THINKING", "768"))
@@ -44,9 +44,26 @@ DEFAULT_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
 DEFAULT_TOP_P = float(os.environ.get("LLM_TOP_P", "0.95"))
 DEFAULT_TOP_K = int(os.environ.get("LLM_TOP_K", "40"))
 DEFAULT_PARALLEL = int(os.environ.get("LLM_PARALLEL", "1"))
+DEFAULT_BATCH_SIZE = int(os.environ.get("LLM_BATCH_SIZE", "512"))
+DEFAULT_UBATCH_SIZE = int(os.environ.get("LLM_UBATCH_SIZE", "128"))
 DEFAULT_GPU_LAYERS = os.environ.get("LLM_GPU_LAYERS", "auto")
 DEFAULT_MAX_OCR_CHARS = int(os.environ.get("LLM_MAX_OCR_CHARS", "12000"))
 DEFAULT_MAX_HISTORY_CHARS = int(os.environ.get("LLM_MAX_HISTORY_CHARS", "4000"))
+LLM_MTP_ENABLED = os.environ.get("LLM_MTP_ENABLED", "0").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+LLM_SPEC_TYPE = os.environ.get("LLM_SPEC_TYPE", "draft-mtp").strip()
+LLM_SPEC_DRAFT_MODEL_PATH = Path(
+    os.environ.get(
+        "LLM_SPEC_DRAFT_MODEL_PATH",
+        MODEL_PATH.parent / "mtp" / "gemma-4-E2B-it-Q4_0-MTP.gguf",
+    )
+)
+LLM_SPEC_DRAFT_N_MAX = int(os.environ.get("LLM_SPEC_DRAFT_N_MAX", "2"))
+LLM_SPEC_DRAFT_GPU_LAYERS = os.environ.get("LLM_SPEC_DRAFT_GPU_LAYERS", DEFAULT_GPU_LAYERS).strip()
+LLM_SPEC_DRAFT_DEVICE = os.environ.get("LLM_SPEC_DRAFT_DEVICE", "").strip()
 LLM_DEVICE = os.environ.get("LLM_DEVICE", "").strip()
 LLM_FLASH_ATTN = os.environ.get("LLM_FLASH_ATTN", "").strip()
 LLM_FIT = os.environ.get("LLM_FIT", "").strip()
@@ -63,7 +80,7 @@ LLM_OP_OFFLOAD = os.environ.get("LLM_OP_OFFLOAD", "1").lower() not in {
 STARTUP_TIMEOUT_SECONDS = float(os.environ.get("LLM_STARTUP_TIMEOUT_SECONDS", "240"))
 REQUEST_TIMEOUT_SECONDS = float(os.environ.get("LLM_REQUEST_TIMEOUT_SECONDS", "300"))
 
-MODEL_ALIAS = os.environ.get("LLM_MODEL_ALIAS", "gemma-4-E2B-it-Q4_K_M")
+MODEL_ALIAS = os.environ.get("LLM_MODEL_ALIAS", "gemma-4-E2B-it-qat-UD-Q4_K_XL")
 DISABLE_THINKING = os.environ.get("LLM_DISABLE_THINKING", "0").lower() not in {
     "0",
     "false",
@@ -104,6 +121,7 @@ class AnswerResponse(BaseModel):
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    tokens_per_second: float | None = None
     ocr_chars: int
     ocr_truncated: bool
     stopped_due_to_max_tokens: bool = False
@@ -122,6 +140,8 @@ class LlamaServer:
 
         if not MODEL_PATH.exists():
             raise RuntimeError(f"LLM model file does not exist: {MODEL_PATH}")
+        if LLM_MTP_ENABLED and LLM_SPEC_DRAFT_MODEL_PATH and not LLM_SPEC_DRAFT_MODEL_PATH.exists():
+            raise RuntimeError(f"LLM MTP draft model file does not exist: {LLM_SPEC_DRAFT_MODEL_PATH}")
 
         self.process = subprocess.Popen(
             build_llama_command(),
@@ -192,14 +212,29 @@ async def answer_question(request: AnswerRequest) -> AnswerResponse:
     finish_reason = str(first_choice.get("finish_reason") or "").strip().lower()
     stopped_due_to_max_tokens = finish_reason == "length"
     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    timings = data.get("timings") if isinstance(data.get("timings"), dict) else {}
+    prompt_tokens = as_int_or_none(usage.get("prompt_tokens"))
+    completion_tokens = as_int_or_none(usage.get("completion_tokens"))
+    total_tokens = as_int_or_none(usage.get("total_tokens"))
+    if completion_tokens is None:
+        completion_tokens = as_int_or_none(timings.get("predicted_n"))
+    if prompt_tokens is None:
+        prompt_tokens = as_int_or_none(timings.get("prompt_n"))
+    if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+        total_tokens = prompt_tokens + completion_tokens
     return AnswerResponse(
         answer=answer_text,
         reasoning_text=reasoning_text or None,
         model=str(data.get("model") or MODEL_ALIAS),
         elapsed_ms=elapsed_ms,
-        prompt_tokens=usage.get("prompt_tokens"),
-        completion_tokens=usage.get("completion_tokens"),
-        total_tokens=usage.get("total_tokens"),
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        tokens_per_second=llama_tokens_per_second(
+            timings,
+            completion_tokens=completion_tokens,
+            elapsed_ms=elapsed_ms,
+        ),
         ocr_chars=prepared_ocr["original_chars"],
         ocr_truncated=prepared_ocr["truncated"],
         stopped_due_to_max_tokens=stopped_due_to_max_tokens,
@@ -303,6 +338,11 @@ async def answer_question_stream(request: AnswerRequest) -> StreamingResponse:
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": total_tokens,
+                "tokens_per_second": llama_tokens_per_second(
+                    timings,
+                    completion_tokens=completion_tokens,
+                    elapsed_ms=elapsed_ms,
+                ),
                 "ocr_chars": prepared_ocr["original_chars"],
                 "ocr_truncated": prepared_ocr["truncated"],
                 "stopped_due_to_max_tokens": stopped_due_to_max_tokens,
@@ -335,6 +375,10 @@ def build_llama_command() -> list[str]:
         str(DEFAULT_CTX_SIZE),
         "--parallel",
         str(DEFAULT_PARALLEL),
+        "--batch-size",
+        str(DEFAULT_BATCH_SIZE),
+        "--ubatch-size",
+        str(DEFAULT_UBATCH_SIZE),
         "--gpu-layers",
         DEFAULT_GPU_LAYERS,
         "--temp",
@@ -346,6 +390,21 @@ def build_llama_command() -> list[str]:
         "--no-ui",
         "--offline",
     ]
+    if LLM_MTP_ENABLED:
+        command.extend(
+            [
+                "--spec-type",
+                LLM_SPEC_TYPE,
+                "--spec-draft-n-max",
+                str(LLM_SPEC_DRAFT_N_MAX),
+            ]
+        )
+        if LLM_SPEC_DRAFT_MODEL_PATH:
+            command.extend(["--model-draft", str(LLM_SPEC_DRAFT_MODEL_PATH)])
+        if LLM_SPEC_DRAFT_GPU_LAYERS:
+            command.extend(["--gpu-layers-draft", LLM_SPEC_DRAFT_GPU_LAYERS])
+        if LLM_SPEC_DRAFT_DEVICE:
+            command.extend(["--device-draft", LLM_SPEC_DRAFT_DEVICE])
     if DISABLE_THINKING:
         command.extend(
             [
@@ -363,6 +422,8 @@ def build_llama_command() -> list[str]:
         command.extend(["--flash-attn", LLM_FLASH_ATTN])
     if LLM_FIT:
         command.extend(["--fit", LLM_FIT])
+    if not WARMUP_ON_STARTUP:
+        command.append("--no-warmup")
     if not LLM_KV_OFFLOAD:
         command.append("--no-kv-offload")
     if not LLM_OP_OFFLOAD:
@@ -707,6 +768,36 @@ def as_int_or_none(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def llama_tokens_per_second(
+    timings: dict[str, Any],
+    *,
+    completion_tokens: int | None,
+    elapsed_ms: int,
+) -> float | None:
+    for key in ("predicted_per_second", "tokens_per_second"):
+        try:
+            value = float(timings.get(key))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return round(value, 2)
+
+    predicted_ms = None
+    for key in ("predicted_ms", "predicted_time_ms"):
+        try:
+            predicted_ms = float(timings.get(key))
+        except (TypeError, ValueError):
+            continue
+        if predicted_ms and predicted_ms > 0:
+            break
+
+    if completion_tokens is not None and predicted_ms and predicted_ms > 0:
+        return round(completion_tokens / (predicted_ms / 1000), 2)
+    if completion_tokens is not None and elapsed_ms > 0:
+        return round(completion_tokens / (elapsed_ms / 1000), 2)
+    return None
 
 
 def sse_event(event: str, payload: dict[str, Any]) -> str:

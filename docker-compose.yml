@@ -87,7 +87,14 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
       LLAMA_SERVER_BIN: /opt/llama.cpp/build/bin/llama-server
       LD_LIBRARY_PATH: /opt/llama.cpp/build/bin:/usr/local/cuda/lib64:/usr/lib/aarch64-linux-gnu/nvidia
-      LLM_CTX_SIZE: 8192
+      LLM_CTX_SIZE: 49152
+      LLM_MTP_ENABLED: 1
+      LLM_SPEC_TYPE: draft-mtp
+      LLM_SPEC_DRAFT_MODEL_PATH: /models/llm/mtp/gemma-4-E2B-it-Q4_0-MTP.gguf
+      LLM_SPEC_DRAFT_N_MAX: 2
+      LLM_SPEC_DRAFT_GPU_LAYERS: all
+      LLM_WARMUP_ON_STARTUP: 0
+      GGML_CUDA_DISABLE_GRAPHS: 1
       LLM_MAX_OCR_CHARS: 6000
       LLM_MAX_TOKENS: 2048
       LLM_THINKING_MAX_TOKENS: 2048
@@ -96,7 +103,9 @@ services:
       LLM_TOP_P: 0.95
       LLM_TOP_K: 40
       LLM_PARALLEL: 1
-      LLM_GPU_LAYERS: 999
+      LLM_BATCH_SIZE: 512
+      LLM_UBATCH_SIZE: 128
+      LLM_GPU_LAYERS: all
       LLM_DEVICE: ""
       LLM_FLASH_ATTN: ""
       LLM_FIT: "on"

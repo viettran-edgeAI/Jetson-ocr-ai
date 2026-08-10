@@ -118,6 +118,7 @@ class SessionStore:
                     prompt_tokens INTEGER,
                     completion_tokens INTEGER,
                     total_tokens INTEGER,
+                    tokens_per_second REAL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(session_id) REFERENCES sessions(id)
                 );
@@ -162,6 +163,7 @@ class SessionStore:
             connection.execute("DROP INDEX IF EXISTS idx_users_username_unique")
             self._ensure_column(connection, "sessions", "owner_type", "TEXT NOT NULL DEFAULT 'user'")
             self._ensure_column(connection, "sessions", "owner_id", "TEXT NOT NULL DEFAULT 'legacy-owner'")
+            self._ensure_column(connection, "messages", "tokens_per_second", "REAL")
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_sessions_owner_updated_at
@@ -771,15 +773,16 @@ class SessionStore:
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
         total_tokens: int | None = None,
+        tokens_per_second: float | None = None,
     ) -> None:
         with self.connect() as connection:
             connection.execute(
                 """
                 INSERT INTO messages (
                     session_id, role, content, elapsed_ms, prompt_tokens,
-                    completion_tokens, total_tokens, created_at
+                    completion_tokens, total_tokens, tokens_per_second, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -789,6 +792,7 @@ class SessionStore:
                     prompt_tokens,
                     completion_tokens,
                     total_tokens,
+                    tokens_per_second,
                     created_at,
                 ),
             )
@@ -859,7 +863,7 @@ class SessionStore:
             messages = connection.execute(
                 """
                 SELECT role, content, elapsed_ms, prompt_tokens, completion_tokens,
-                       total_tokens, created_at
+                       total_tokens, tokens_per_second, created_at
                 FROM messages
                 WHERE session_id = ?
                 ORDER BY created_at ASC, id ASC

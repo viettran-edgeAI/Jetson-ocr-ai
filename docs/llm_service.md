@@ -44,6 +44,10 @@ The default model path is:
 
 - `/home/viettran_orin/models/llm/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf`
 
+Docker Compose runs this target model with Gemma 4 MTP speculative decoding enabled by default. The draft model path is:
+
+- `/models/llm/mtp/gemma-4-E2B-it-Q4_0-MTP.gguf`
+
 This can be overridden with:
 
 - `LLM_MODEL_PATH`
@@ -207,17 +211,25 @@ The service builds a `llama-server` command with:
 
 Relevant knobs:
 
-- `LLM_CTX_SIZE` defaults to `12288`
+- `LLM_CTX_SIZE` defaults to `49152`
 - `LLM_MAX_TOKENS` defaults to `160`
 - `LLM_THINKING_MAX_TOKENS` defaults to `768`
 - `LLM_TEMPERATURE` defaults to `0.2`
 - `LLM_TOP_P` defaults to `0.95`
 - `LLM_TOP_K` defaults to `40`
 - `LLM_PARALLEL` defaults to `1`
+- `LLM_BATCH_SIZE` defaults to `512`
+- `LLM_UBATCH_SIZE` defaults to `128`
 - `LLM_GPU_LAYERS` defaults to `auto`
 
 Additional optional flags:
 
+- `LLM_MTP_ENABLED`
+- `LLM_SPEC_TYPE`
+- `LLM_SPEC_DRAFT_MODEL_PATH`
+- `LLM_SPEC_DRAFT_N_MAX`
+- `LLM_SPEC_DRAFT_GPU_LAYERS`
+- `LLM_SPEC_DRAFT_DEVICE`
 - `LLM_DEVICE`
 - `LLM_FLASH_ATTN`
 - `LLM_FIT`
@@ -238,7 +250,7 @@ Startup controls:
 - `LLM_STARTUP_TIMEOUT_SECONDS` defaults to `240`
 - `LLM_REQUEST_TIMEOUT_SECONDS` defaults to `300`
 
-If the backend process exits early or never becomes ready, startup fails.
+If the backend process exits early or never becomes ready, startup fails. With the MTP profile, Docker Compose disables llama.cpp warmup and CUDA graph capture via `LLM_WARMUP_ON_STARTUP=0` and `GGML_CUDA_DISABLE_GRAPHS=1` to reduce startup memory pressure on Jetson.
 
 ## Response Parsing
 

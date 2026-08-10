@@ -20,6 +20,7 @@ from .image_ops import (
     rotate_by_label,
     sort_reading_order,
 )
+from .layout import reconstruct_layout
 from .models import OCRBlock, OCRFormula, OCRLine, OCRRegion, OCRResult
 from .paddle_adapter import PaddleRuntime
 
@@ -261,15 +262,15 @@ class OCRPipeline:
         timings_ms["ocr_primary"] = round((perf_counter() - started) * 1000.0, 2)
         debug["ocr"] = {"count": len(text_items)}
 
-        merged_items = self._merge_items(text_items, formula_items, region_blocks)
+        merged_items = self._merge_items(text_items, formula_items, layout_blocks)
         merged_items = self._filter_single_char_rows(merged_items)
-        markdown = self._to_markdown(merged_items)
+        markdown = self._to_markdown(merged_items, layout_blocks)
         lines = self._build_lines(merged_items, page_index=page_index)
         blocks = self._build_blocks(merged_items, page_index=page_index)
-        regions = self._build_regions(region_blocks, page_index=page_index)
+        regions = self._build_regions(layout_blocks, page_index=page_index)
         formulas = self._build_formulas(formula_items, page_index=page_index)
 
-        raw_text = "\n".join(line.text for line in lines if line.accepted and line.text.strip())
+        raw_text = markdown
         total_elapsed = round((perf_counter() - total_started) * 1000.0, 2)
         timings_ms["total"] = total_elapsed
 
@@ -492,9 +493,11 @@ class OCRPipeline:
         return formulas
 
     @staticmethod
-    def _to_markdown(items: list[dict[str, Any]]) -> str:
-        lines = [str(item.get("text") or "").strip() for item in items if str(item.get("text") or "").strip()]
-        return "\n".join(lines)
+    def _to_markdown(
+        items: list[dict[str, Any]],
+        regions: list[dict[str, Any]] | None = None,
+    ) -> str:
+        return reconstruct_layout(items, regions)
 
     @staticmethod
     def _text_fence(text: str) -> str:
@@ -533,11 +536,17 @@ class OCRPipeline:
         x1, y1, x2, y2 = bbox
         cx = (x1 + x2) / 2.0
         cy = (y1 + y2) / 2.0
+        best_index: int | None = None
+        best_overlap = 0.0
         for idx, region in enumerate(regions):
             rx1, ry1, rx2, ry2 = region["bbox"]
-            if rx1 <= cx <= rx2 and ry1 <= cy <= ry2:
-                return idx
-        return None
+            intersection = max(0, min(x2, rx2) - max(x1, rx1)) * max(0, min(y2, ry2) - max(y1, ry1))
+            item_area = max(1, (x2 - x1) * (y2 - y1))
+            overlap = intersection / item_area
+            if overlap > best_overlap or (overlap == best_overlap and rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
+                best_index = idx
+                best_overlap = overlap
+        return best_index if best_overlap > 0.0 else None
 
     @staticmethod
     def _rotate_bbox(bbox: list[int], label: str, width: int, height: int) -> list[int]:

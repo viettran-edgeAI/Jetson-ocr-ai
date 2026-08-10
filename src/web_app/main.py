@@ -652,6 +652,7 @@ async def ask_session(
         prompt_tokens=answer.get("prompt_tokens"),
         completion_tokens=answer.get("completion_tokens"),
         total_tokens=answer.get("total_tokens"),
+        tokens_per_second=as_float_or_none(answer.get("tokens_per_second")),
         created_at=utc_now(),
     )
     store.update_owned_session(
@@ -780,6 +781,7 @@ async def ask_session_stream(
         prompt_tokens = as_int_or_none(final_meta.get("prompt_tokens"))
         completion_tokens = as_int_or_none(final_meta.get("completion_tokens"))
         total_tokens = as_int_or_none(final_meta.get("total_tokens"))
+        tokens_per_second = as_float_or_none(final_meta.get("tokens_per_second"))
 
         store.add_message(
             session_id=session_id,
@@ -789,6 +791,7 @@ async def ask_session_stream(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            tokens_per_second=tokens_per_second,
             created_at=utc_now(),
         )
         store.update_owned_session(
@@ -815,6 +818,7 @@ async def ask_session_stream(
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
+            "tokens_per_second": tokens_per_second,
             "stopped_due_to_max_tokens": bool(final_meta.get("stopped_due_to_max_tokens")),
             "max_tokens_limit": as_int_or_none(final_meta.get("max_tokens_limit")),
             "session": serialize_session_detail(updated),
@@ -973,6 +977,18 @@ def as_int_or_none(value: Any) -> int | None:
 def as_int(value: Any, *, fallback: int) -> int:
     parsed = as_int_or_none(value)
     return parsed if parsed is not None else fallback
+
+
+def as_float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
 
 
 def append_max_tokens_notice_if_needed(
