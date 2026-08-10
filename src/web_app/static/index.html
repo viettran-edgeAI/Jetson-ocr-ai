@@ -3,13 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b1020" />
     <title>OCR AI Assistant</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
-  <body>
+  <body class="dark">
     <main class="app-shell">
-      <header class="topbar" aria-label="Application header">
-        <div class="brand">
+      <aside class="session-rail" aria-label="Sessions and account">
+        <div class="rail-brand">
           <div class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24">
               <path d="M7 3.5h6.7L18 7.8v12.7H7z" />
@@ -17,204 +18,183 @@
               <path d="M9.4 12.2h5.2M9.4 15.4h5.2" />
             </svg>
           </div>
-          <div>
-            <h1>OCR AI Assistant</h1>
-            <p>Extract text and get intelligent answers</p>
+          <div class="rail-brand-copy">
+            <strong>OCR AI</strong>
+            <span>Assistant</span>
           </div>
         </div>
-        <div class="utility-actions">
+
+        <button class="rail-new-chat" id="newSessionButton" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          New chat
+        </button>
+
+        <div class="rail-section-heading">
+          <span>Recent sessions</span>
+          <div class="rail-session-actions">
+            <button class="rail-action" id="selectSessionsButton" type="button">Select</button>
+            <button class="rail-action" id="selectAllSessionsButton" type="button" hidden>Select all</button>
+          </div>
+        </div>
+        <div class="rail-selection-bar" aria-live="polite">
+          <span class="selection-summary" id="selectionSummary" hidden>0 selected</span>
+          <button class="rail-action danger-text" id="deleteSelectedButton" type="button" hidden>Delete</button>
+          <button class="rail-action" id="cancelSelectionButton" type="button" hidden>Cancel</button>
+        </div>
+        <div class="session-list" id="sessionList" aria-live="polite"></div>
+        <button class="rail-view-all" id="viewAllButton" type="button">View all sessions</button>
+
+        <div class="rail-account">
           <button class="account-status tier-gray" id="accountStatus" type="button">
+            <span class="account-avatar" aria-hidden="true">G</span>
             <span class="account-name" id="accountName">Guest</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
           </button>
-          <nav class="site-actions" aria-label="Site actions">
+          <nav class="site-actions" aria-label="Account actions">
             <button class="ghost-button" id="pricingButton" type="button">Pricing</button>
             <button class="ghost-button" id="loginButton" type="button">Log in</button>
             <button class="ghost-button" id="signupButton" type="button">Sign up</button>
             <button class="ghost-button" id="logoutButton" type="button">Log out</button>
           </nav>
-          <button class="icon-button" id="themeToggle" type="button" aria-label="Toggle theme" title="Toggle theme">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M20.1 15.4A7.4 7.4 0 0 1 8.6 3.9 8.2 8.2 0 1 0 20.1 15.4z" />
-            </svg>
-          </button>
-          <button class="icon-button" id="helpButton" type="button" aria-label="Help" title="Help">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="8.2" />
-              <path d="M9.7 9.6a2.5 2.5 0 0 1 4.7 1.3c0 1.8-2.4 2-2.4 3.7" />
-              <path d="M12 17.5h.01" />
-            </svg>
-          </button>
+          <div class="rail-footer-actions">
+            <button class="icon-button" id="helpButton" type="button" aria-label="Help" title="Help">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.2" /><path d="M9.7 9.6a2.5 2.5 0 0 1 4.7 1.3c0 1.8-2.4 2-2.4 3.7M12 17.5h.01" /></svg>
+            </button>
+            <button class="icon-button" id="themeToggle" type="button" aria-label="Toggle theme" title="Toggle theme">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.1 15.4A7.4 7.4 0 0 1 8.6 3.9 8.2 8.2 0 1 0 20.1 15.4z" /></svg>
+            </button>
+          </div>
         </div>
-      </header>
+      </aside>
 
-      <section class="workspace" aria-label="OCR workspace">
-        <section class="panel input-panel" aria-label="Input">
-          <div class="drop-zone" id="dropZone" tabindex="0" role="button" aria-label="Upload or paste a document">
-            <input id="fileInput" type="file" accept=".png,.jpg,.jpeg,.pdf,image/png,image/jpeg,application/pdf" hidden />
-            <div class="drop-content">
-              <svg class="upload-cloud" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M16.9 18H18a4 4 0 0 0 .4-8 6.5 6.5 0 0 0-12.2-2.1A4.8 4.8 0 0 0 6 17.5h1.1" />
-                <path d="M12 12v8" />
-                <path d="m8.7 15.2 3.3-3.3 3.3 3.3" />
-              </svg>
-              <p class="drop-title" id="dropTitle">Attach a document anytime</p>
-              <p class="drop-subtitle">Supports: PNG, JPG, JPEG, PDF</p>
-              <div class="selected-file" id="selectedFilePreview" hidden></div>
-              <button class="primary-upload" id="uploadButton" type="button">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M12 3v12" />
-                  <path d="m8 7 4-4 4 4" />
-                  <path d="M5 15v4h14v-4" />
-                </svg>
-                Upload files
-              </button>
-              <button class="convert-button" id="convertButton" type="button" hidden>
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M5 12h13" />
-                  <path d="m14 8 4 4-4 4" />
-                </svg>
-                Convert
-              </button>
-              <button class="start-again-button" id="startAgainButton" type="button" hidden>
-                Start again
-              </button>
-              <p class="upload-limit" id="uploadLimitStatus" aria-live="polite"></p>
-              <p class="state-text" id="uploadState" aria-live="polite"></p>
-            </div>
+      <section class="main-stage" aria-label="OCR workspace">
+        <header class="topbar" aria-label="Conversation header">
+          <div class="conversation-heading">
+            <span class="eyebrow">WORKSPACE</span>
+            <h1>OCR AI Assistant</h1>
+            <p>Extract text, search the web, and ask anything.</p>
           </div>
-        </section>
+          <div class="topbar-actions">
+            <span class="status-pill" id="workspaceStatus" aria-live="polite">Ready</span>
+            <button class="icon-button" id="copyOcrButton" type="button" aria-label="Copy OCR text" title="Copy OCR text">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="12" rx="1.5" /><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v11A1.5 1.5 0 0 0 5.5 18H8" /></svg>
+            </button>
+          </div>
+        </header>
 
-        <section class="panel output-panel" aria-label="Output">
-          <div class="output-card" id="outputCard">
-            <div class="empty-output" id="emptyOutput">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M7 3.5h7l4 4v13H7z" />
-                <path d="M14 3.7v4.1h4" />
-                <path d="M10 12h5M10 15.5h5" />
-              </svg>
-              <p>Start chatting, or attach a document for OCR context</p>
-            </div>
-            <section class="ocr-panel" id="ocrPanel" hidden>
-              <div class="ocr-toolbar">
-                <span class="ocr-label">OCR result</span>
-                <div class="ocr-actions">
-                  <span class="copy-status" id="copyOcrStatus" aria-live="polite"></span>
-                  <button class="copy-button" id="copyOcrButton" type="button">Copy</button>
+        <section class="workspace" aria-label="Conversation and actions">
+          <div class="conversation-column">
+            <div class="output-card" id="outputCard">
+              <div class="empty-output" id="emptyOutput">
+                <div class="empty-orb" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M7 3.5h7l4 4v13H7z" /><path d="M14 3.7v4.1h4" /><path d="M10 12h5M10 15.5h5" /></svg>
                 </div>
+                <strong>What would you like to work on?</strong>
+                <p>Drop a document into the composer or start a conversation.</p>
               </div>
-              <article class="ocr-result" id="ocrResult"></article>
-            </section>
-            <article class="answer-result" id="answerResult" hidden></article>
-          </div>
-
-          <form class="prompt-form" id="promptForm">
-            <div class="thinking-mode-wrap" id="thinkingModeWrap">
-              <button
-                class="thinking-mode-button"
-                id="thinkingModeButton"
-                type="button"
-                aria-haspopup="listbox"
-                aria-expanded="false"
-              >
-                <span id="thinkingModeLabel">Fast</span>
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="m7 10 5 5 5-5" />
-                </svg>
-              </button>
-              <div class="thinking-mode-menu" id="thinkingModeMenu" role="listbox" aria-label="Thinking mode" hidden>
-                <button type="button" role="option" data-thinking-mode="fast" aria-selected="true">Fast</button>
-                <button type="button" role="option" data-thinking-mode="thinking" aria-selected="false">Thinking</button>
-              </div>
+              <section class="ocr-panel" id="ocrPanel" hidden aria-hidden="true">
+                <div class="ocr-toolbar">
+                  <span class="ocr-label">OCR context</span>
+                  <div class="ocr-actions">
+                    <span class="copy-status" id="copyOcrStatus" aria-live="polite"></span>
+                    <button class="copy-button" id="copyOcrPanelButton" type="button">Copy</button>
+                  </div>
+                </div>
+                <article class="ocr-result" id="ocrResult"></article>
+              </section>
+              <article class="answer-result" id="answerResult" hidden></article>
             </div>
-            <input id="promptInput" type="text" autocomplete="off" placeholder="Ask anything, or attach a document for OCR context..." />
-            <button class="send-button" id="sendButton" type="submit" aria-label="Send prompt" title="Send prompt">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M4 4.5 20 12 4 19.5v-6l9-1.5-9-1.5z" />
-              </svg>
-            </button>
-          </form>
 
-          <div class="quick-actions">
-            <button type="button" data-mode="answer">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M5 5h14v10H8l-3 3z" />
-                <path d="M9 9h.01M12 9h.01M15 9h.01" />
-              </svg>
-              Answer the question(s)
-            </button>
-            <div class="quick-action-translate" id="translateQuickAction">
-              <button type="button" class="quick-action-main" data-mode="translate">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M5 7h8" />
-                  <path d="M9 5v2c0 3-1.2 5.7-3.3 7.7" />
-                  <path d="m6.1 11.8 2.6 2.9 3.2 3.3" />
-                  <path d="M14 7h5" />
-                  <path d="m16.2 5 3.8 10" />
-                  <path d="m14.7 12.2 4.1-.1" />
-                </svg>
-                Translate to
-              </button>
-              <div class="quick-action-language">
-                <button
-                  type="button"
-                  class="quick-action-language-button"
-                  id="translateLanguageButton"
-                  aria-haspopup="listbox"
-                  aria-expanded="false"
-                >
-                  <span id="translateLanguageLabel">Vietnamese</span>
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="m7 10 5 5 5-5" />
-                  </svg>
+            <div class="composer-zone">
+              <div class="drop-zone" id="dropZone" tabindex="0" role="button" aria-label="Attach documents">
+                <input id="fileInput" type="file" accept=".png,.jpg,.jpeg,.pdf,image/png,image/jpeg,application/pdf" multiple hidden />
+                <div class="drop-hint">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M8 8l4-4 4 4M5 13v5h14v-5" /></svg>
+                  <span>Drop files, paste images, or <button id="uploadButton" type="button">browse</button></span>
+                  <small>PNG, JPG, JPEG, or PDF · multiple files supported</small>
+                </div>
+                <div class="selected-file" id="selectedFilePreview" hidden></div>
+              </div>
+              <form class="prompt-form" id="promptForm">
+                <button class="composer-attach" id="composerAttachButton" type="button" aria-label="Attach files" title="Attach files">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.5 11.3-8.8 8.8a5 5 0 0 1-7.1-7.1l9-9a3.4 3.4 0 0 1 4.8 4.8l-8.8 8.8a1.8 1.8 0 1 1-2.6-2.6l8.1-8.1" /></svg>
                 </button>
-                <div
-                  class="quick-action-language-menu"
-                  id="translateLanguageMenu"
-                  role="listbox"
-                  aria-label="Translation language"
-                  hidden
-                >
-                  <button type="button" role="option" data-translate-language="Vietnamese" aria-selected="true">Vietnamese</button>
-                  <button type="button" role="option" data-translate-language="English" aria-selected="false">English</button>
-                  <button type="button" role="option" data-translate-language="Chinese" aria-selected="false">Chinese</button>
-                  <button type="button" role="option" data-translate-language="Japanese" aria-selected="false">Japanese</button>
-                  <button type="button" role="option" data-translate-language="Korean" aria-selected="false">Korean</button>
-                  <button type="button" role="option" data-translate-language="Russian" aria-selected="false">Russian</button>
-                  <button type="button" role="option" data-translate-language="Thai" aria-selected="false">Thai</button>
-                  <button type="button" role="option" data-translate-language="French" aria-selected="false">French</button>
-                  <button type="button" role="option" data-translate-language="German" aria-selected="false">German</button>
-                  <button type="button" role="option" data-translate-language="Spanish" aria-selected="false">Spanish</button>
+                <div class="thinking-mode-wrap" id="thinkingModeWrap">
+                  <button class="thinking-mode-button" id="thinkingModeButton" type="button" aria-haspopup="listbox" aria-expanded="false">
+                    <span id="thinkingModeLabel">Fast</span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
+                  </button>
+                  <div class="thinking-mode-menu" id="thinkingModeMenu" role="listbox" aria-label="Thinking mode" hidden>
+                    <button type="button" role="option" data-thinking-mode="fast" aria-selected="true">Fast</button>
+                    <button type="button" role="option" data-thinking-mode="thinking" aria-selected="false">Thinking</button>
+                  </div>
                 </div>
+                <div class="prompt-entry">
+                  <span class="search-chip" id="searchWebChip" hidden>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.4" /><path d="m16 16 4 4" /></svg>
+                    <span>Web search on</span>
+                  </span>
+                  <textarea id="promptInput" rows="1" autocomplete="off" placeholder="Message OCR AI Assistant..." aria-label="Message OCR AI Assistant"></textarea>
+                </div>
+                <button class="send-button" id="sendButton" type="submit" aria-label="Send prompt" title="Send prompt">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4.5 20 12 4 19.5v-6l9-1.5-9-1.5z" /></svg>
+                </button>
+              </form>
+              <div class="composer-meta">
+                <p class="upload-limit" id="uploadLimitStatus" aria-live="polite"></p>
+                <p class="state-text" id="uploadState" aria-live="polite"></p>
+                <span class="composer-shortcut">Enter to send · Shift+Enter for a new line</span>
               </div>
             </div>
           </div>
-        </section>
-      </section>
 
-      <section class="recent-shell" aria-label="Recent sessions">
-        <div class="section-title recent-title">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4 12a8 8 0 1 0 2.3-5.7" />
-            <path d="M4 4v5h5" />
-            <path d="M12 7v5l3 2" />
-          </svg>
-          <h2>RECENT SESSIONS</h2>
-        </div>
-        <div class="recent-panel">
-          <div class="recent-header">
-            <div class="recent-actions recent-actions-left">
-              <button class="text-button" id="selectSessionsButton" type="button">Select</button>
-              <button class="text-button" id="selectAllSessionsButton" type="button" hidden>Select all</button>
-              <span class="selection-summary" id="selectionSummary" hidden>0 selected</span>
-              <button class="text-button danger-text" id="deleteSelectedButton" type="button" hidden>Delete selected</button>
-              <button class="text-button" id="cancelSelectionButton" type="button" hidden>Cancel</button>
+          <aside class="action-rail" aria-label="Quick actions">
+            <div class="action-group quick-actions">
+              <span class="action-group-label">Quick actions</span>
+              <button type="button" data-mode="answer">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H8l-3 3z" /><path d="M9 9h.01M12 9h.01M15 9h.01" /></svg>
+                <span>Answer</span>
+              </button>
+              <div class="quick-action-translate" id="translateQuickAction">
+                <button type="button" class="quick-action-main" data-mode="translate">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h8M9 5v2c0 3-1.2 5.7-3.3 7.7M6.1 11.8l2.6 2.9 3.2 3.3M14 7h5m-2.8-2 3.8 10m-5.1-2.8 4.1-.1" /></svg>
+                  <span>Translate</span>
+                </button>
+                <div class="quick-action-language">
+                  <button type="button" class="quick-action-language-button" id="translateLanguageButton" aria-haspopup="listbox" aria-expanded="false">
+                    <span id="translateLanguageLabel">Vietnamese</span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
+                  </button>
+                  <div class="quick-action-language-menu" id="translateLanguageMenu" role="listbox" aria-label="Translation language" hidden>
+                    <button type="button" role="option" data-translate-language="Vietnamese" aria-selected="true">Vietnamese</button>
+                    <button type="button" role="option" data-translate-language="English" aria-selected="false">English</button>
+                    <button type="button" role="option" data-translate-language="Chinese" aria-selected="false">Chinese</button>
+                    <button type="button" role="option" data-translate-language="Japanese" aria-selected="false">Japanese</button>
+                    <button type="button" role="option" data-translate-language="Korean" aria-selected="false">Korean</button>
+                    <button type="button" role="option" data-translate-language="Russian" aria-selected="false">Russian</button>
+                    <button type="button" role="option" data-translate-language="Thai" aria-selected="false">Thai</button>
+                    <button type="button" role="option" data-translate-language="French" aria-selected="false">French</button>
+                    <button type="button" role="option" data-translate-language="German" aria-selected="false">German</button>
+                    <button type="button" role="option" data-translate-language="Spanish" aria-selected="false">Spanish</button>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div class="recent-actions recent-actions-right">
-              <button class="text-button" id="viewAllButton" type="button">View all</button>
+            <div class="action-group tool-stack">
+              <span class="action-group-label">Tools</span>
+              <button class="tool-button run-ocr" id="convertButton" type="button" disabled>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4z" /><path d="M8 10h.01M11 10h.01M14 10h.01M8 14h8" /></svg>
+                <span>Run OCR</span>
+                <small id="queueCount">0 files</small>
+              </button>
+              <button class="tool-button search-web" id="searchWebButton" type="button" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4M4.5 11h13M11 4.5c2 2 2 4.8 2 6.5s-.7 4.5-2 6.5c-1.3-2-2-4.8-2-6.5s.7-4.5 2-6.5z" /></svg>
+                <span>Search web</span>
+                <small>Next prompt</small>
+              </button>
             </div>
-          </div>
-          <div class="session-list" id="sessionList" aria-live="polite"></div>
-        </div>
+          </aside>
+        </section>
       </section>
     </main>
 
@@ -222,41 +202,17 @@
       <div class="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="authTitle">
         <div class="auth-header">
           <h2 id="authTitle">Log in</h2>
-          <button class="icon-button" id="authCloseButton" type="button" aria-label="Close" title="Close">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 6l12 12M18 6 6 18" />
-            </svg>
-          </button>
+          <button class="icon-button" id="authCloseButton" type="button" aria-label="Close" title="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
         </div>
         <form class="auth-form" id="authForm">
           <div class="auth-credentials" id="authCredentialsFields">
-            <label class="signup-only" id="authUsernameWrap">
-              <span>Username</span>
-              <input id="authUsername" type="text" autocomplete="username" minlength="3" maxlength="32" />
-            </label>
-            <label>
-              <span>Email</span>
-              <input id="authEmail" type="email" autocomplete="email" required />
-            </label>
-            <label>
-              <span>Password</span>
-              <input id="authPassword" type="password" autocomplete="current-password" minlength="8" required />
-            </label>
-            <label class="signup-only" id="authPasswordConfirmWrap">
-              <span>Confirm password</span>
-              <input id="authPasswordConfirm" type="password" autocomplete="new-password" minlength="8" />
-            </label>
-            <label class="auth-honeypot" aria-hidden="true">
-              <span>Website</span>
-              <input id="authWebsite" type="text" tabindex="-1" autocomplete="off" />
-            </label>
+            <label class="signup-only" id="authUsernameWrap"><span>Username</span><input id="authUsername" type="text" autocomplete="username" minlength="3" maxlength="32" /></label>
+            <label><span>Email</span><input id="authEmail" type="email" autocomplete="email" required /></label>
+            <label><span>Password</span><input id="authPassword" type="password" autocomplete="current-password" minlength="8" required /></label>
+            <label class="signup-only" id="authPasswordConfirmWrap"><span>Confirm password</span><input id="authPasswordConfirm" type="password" autocomplete="new-password" minlength="8" /></label>
+            <label class="auth-honeypot" aria-hidden="true"><span>Website</span><input id="authWebsite" type="text" tabindex="-1" autocomplete="off" /></label>
           </div>
-          <div class="auth-step-panel" id="emailVerificationFields" hidden>
-            <label>
-              <span>Email verification code</span>
-              <input id="emailVerificationCode" type="text" inputmode="numeric" autocomplete="one-time-code" />
-            </label>
-          </div>
+          <div class="auth-step-panel" id="emailVerificationFields" hidden><label><span>Email verification code</span><input id="emailVerificationCode" type="text" inputmode="numeric" autocomplete="one-time-code" /></label></div>
           <button class="primary-upload" id="authSubmitButton" type="submit">Log in</button>
           <p class="state-text" id="authStatus" aria-live="polite"></p>
         </form>
@@ -265,37 +221,11 @@
 
     <div class="auth-modal" id="accountModal" hidden>
       <div class="auth-dialog account-dialog" role="dialog" aria-modal="true" aria-labelledby="accountTitle">
-        <div class="auth-header">
-          <h2 id="accountTitle">Account</h2>
-          <button class="icon-button" id="accountCloseButton" type="button" aria-label="Close" title="Close">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 6l12 12M18 6 6 18" />
-            </svg>
-          </button>
-        </div>
+        <div class="auth-header"><h2 id="accountTitle">Account</h2><button class="icon-button" id="accountCloseButton" type="button" aria-label="Close" title="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button></div>
         <div class="account-panel" id="accountPanel">
-          <div class="account-summary">
-            <span class="account-chip tier-gray" id="accountTierChip">GUEST</span>
-            <strong id="accountPanelUsername">Guest</strong>
-          </div>
-          <dl class="account-details" id="accountDetails">
-            <div>
-              <dt>Email</dt>
-              <dd id="accountEmail">Sign in to manage an account.</dd>
-            </div>
-            <div>
-              <dt>Tier</dt>
-              <dd id="accountTierValue">Guest</dd>
-            </div>
-            <div>
-              <dt>Usage</dt>
-              <dd id="accountUsage">OCR uploads: 10/10 remaining this hour.</dd>
-            </div>
-          </dl>
-          <div class="account-actions">
-            <button class="ghost-button" id="accountUpgradeButton" type="button">Upgrade account</button>
-            <button class="ghost-button danger-ghost" id="accountDeleteButton" type="button">Delete account</button>
-          </div>
+          <div class="account-summary"><span class="account-chip tier-gray" id="accountTierChip">GUEST</span><strong id="accountPanelUsername">Guest</strong></div>
+          <dl class="account-details" id="accountDetails"><div><dt>Email</dt><dd id="accountEmail">Sign in to manage an account.</dd></div><div><dt>Tier</dt><dd id="accountTierValue">Guest</dd></div><div><dt>Usage</dt><dd id="accountUsage">OCR uploads: 10/10 remaining this hour.</dd></div></dl>
+          <div class="account-actions"><button class="ghost-button" id="accountUpgradeButton" type="button">Upgrade account</button><button class="ghost-button danger-ghost" id="accountDeleteButton" type="button">Delete account</button></div>
           <p class="state-text" id="accountStatusMessage" aria-live="polite"></p>
         </div>
       </div>
@@ -303,45 +233,17 @@
 
     <div class="auth-modal" id="helpModal" hidden>
       <div class="auth-dialog account-dialog" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
-        <div class="auth-header">
-          <h2 id="helpTitle">Help</h2>
-          <button class="icon-button" id="helpCloseButton" type="button" aria-label="Close" title="Close">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 6l12 12M18 6 6 18" />
-            </svg>
-          </button>
-        </div>
+        <div class="auth-header"><h2 id="helpTitle">Help</h2><button class="icon-button" id="helpCloseButton" type="button" aria-label="Close" title="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button></div>
         <div class="account-panel">
-          <div class="help-block">
-            <h3>About this app</h3>
-            <p>Paste images/documents, extract OCR text, and get high-speed answers in one workspace.</p>
-          </div>
-          <div class="help-block">
-            <h3>How to use</h3>
-            <ul>
-              <li>Upload or paste image/PDF files into the input area.</li>
-              <li>Use the Copy button to copy OCR results quickly.</li>
-              <li>Chat directly, or use quick prompts: <strong>Answer the question(s)</strong> and <strong>Translate to Vietnamese</strong>.</li>
-            </ul>
-          </div>
-          <div class="help-block">
-            <h3>Contact owner</h3>
-            <p><a href="mailto:tranvaviet@gmail.com">tranvaviet@gmail.com</a></p>
-          </div>
+          <div class="help-block"><h3>About this app</h3><p>Paste images/documents, extract OCR text, and get high-speed answers in one workspace.</p></div>
+          <div class="help-block"><h3>How to use</h3><ul><li>Upload or paste one or more PNG, JPG, JPEG, or PDF files.</li><li>Press <strong>Run OCR</strong> to process the queue into one session.</li><li>Use Answer, Translate, or Search web for the next prompt.</li></ul></div>
+          <div class="help-block"><h3>Contact owner</h3><p><a href="mailto:tranvaviet@gmail.com">tranvaviet@gmail.com</a></p></div>
         </div>
       </div>
     </div>
 
     <script>
-      window.MathJax = {
-        tex: {
-          displayMath: [["\\[", "\\]"], ["$$", "$$"]],
-          inlineMath: [["\\(", "\\)"]],
-        },
-        options: {
-          skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"],
-        },
-      };
+      window.MathJax = { tex: { displayMath: [["\\[", "\\]"], ["$$", "$$"]], inlineMath: [["\\(", "\\)"]] }, options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] } };
     </script>
     <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" defer></script>
     <script src="/static/app.js" defer></script>

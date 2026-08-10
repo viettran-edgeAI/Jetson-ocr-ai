@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hmac
 import json
 import mimetypes
@@ -44,6 +45,7 @@ from .auth import (
     validate_secret_key,
     verify_password,
 )
+from .brave_search import BraveSearchError, search_llm_context
 from .store import SessionStore
 
 
@@ -96,6 +98,17 @@ PENDING_SIGNUP_HOURS = 2
 BOT_CHALLENGE_MINUTES = 10
 AUTH_ATTEMPT_LIMIT = 30
 AUTH_ATTEMPT_ACTION = "auth_attempt"
+MAX_LLM_IMAGES = 6
+MAX_LLM_IMAGE_BYTES = 8 * 1024 * 1024
+MAX_WEB_CONTEXT_CHARS = 12000
+MAX_WEB_SOURCES = 8
+_VISION_FLAG = os.environ.get("WEB_LLM_VISION_ENABLED", "").strip().lower()
+_VISION_DEFAULT = bool(os.environ.get("LLM_MMPROJ_PATH", "").strip())
+WEB_LLM_VISION_ENABLED = (
+    _VISION_DEFAULT
+    if not _VISION_FLAG
+    else _VISION_FLAG in {"1", "true", "yes", "on"}
+)
 
 for path in (UPLOAD_DIR, OCR_DIR):
     path.mkdir(parents=True, exist_ok=True)
@@ -121,6 +134,7 @@ class AskRequest(BaseModel):
     prompt: str = Field(..., min_length=0, max_length=2000)
     mode: str | None = Field(default=None, max_length=64)
     thinking_mode: Literal["fast", "thinking"] = "fast"
+    search_web: bool = False
 
 
 class RenameSessionRequest(BaseModel):
@@ -390,21 +404,101 @@ async def get_session(session_id: str, identity: Identity = Depends(current_iden
 @app.get("/sessions/{session_id}/original")
 async def get_original(
     session_id: str,
+    attachment_id: str | None = Query(default=None),
     identity: Identity = Depends(current_identity),
 ) -> FileResponse:
     identity = coerce_identity(identity)
     session = get_owned_session_or_404(session_id, identity)
-    if not has_session_document(session):
+    attachment = get_session_attachment(session, attachment_id)
+    if attachment is None:
         raise HTTPException(status_code=404, detail="No original document is attached.")
-    original_path = Path(session["original_path"])
+    original_path = Path(str(attachment.get("original_path") or ""))
     if not original_path.exists():
         raise HTTPException(status_code=404, detail="Original file not found.")
     return FileResponse(
         original_path,
-        media_type=session["content_type"],
-        filename=session["filename"],
+        media_type=str(attachment.get("content_type") or session["content_type"]),
+        filename=str(attachment.get("filename") or session["filename"]),
         content_disposition_type="inline",
     )
+
+
+@app.get("/sessions/{session_id}/attachments/{attachment_id}/original")
+async def get_attachment_original(
+    session_id: str,
+    attachment_id: str,
+    identity: Identity = Depends(current_identity),
+) -> FileResponse:
+    identity = coerce_identity(identity)
+    session = get_owned_session_or_404(session_id, identity)
+    attachment = get_session_attachment(session, attachment_id)
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Attachment not found.")
+    original_path = Path(str(attachment.get("original_path") or ""))
+    if not original_path.exists():
+        raise HTTPException(status_code=404, detail="Original file not found.")
+    return FileResponse(
+        original_path,
+        media_type=str(attachment.get("content_type") or "application/octet-stream"),
+        filename=str(attachment.get("filename") or "attachment"),
+        content_disposition_type="inline",
+    )
+
+
+@app.delete("/sessions/{session_id}/attachments/{attachment_id}")
+async def delete_attachment(
+    session_id: str,
+    attachment_id: str,
+    identity: Identity = Depends(current_identity),
+) -> dict[str, Any]:
+    identity = coerce_identity(identity)
+    session = get_owned_session_or_404(session_id, identity)
+    attachment = get_session_attachment(session, attachment_id)
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Attachment not found.")
+    if session["status"] in {"uploading", "ocr_running", "answering"}:
+        raise HTTPException(status_code=409, detail="Session is busy.")
+    deleted = store.delete_attachment(
+        attachment_id,
+        owner_type=identity.owner_type,
+        owner_id=identity.owner_id,
+    )
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Attachment not found.")
+    delete_attachment_artifacts(deleted)
+    refreshed = store.get_session(session_id, owner_type=identity.owner_type, owner_id=identity.owner_id)
+    if refreshed is None:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    cumulative_markdown = build_cumulative_markdown(refreshed)
+    aggregate_path = artifact_owner_dir(OCR_DIR, identity) / f"{session_id}.md"
+    if cumulative_markdown:
+        aggregate_path.write_text(cumulative_markdown, encoding="utf-8")
+    else:
+        aggregate_path.unlink(missing_ok=True)
+    remaining = list(refreshed.get("attachments") or [])
+    first = remaining[0] if remaining else {}
+    total_pages = sum(int(item["page_count"]) for item in remaining if item.get("page_count") is not None) or None
+    total_elapsed = sum(
+        int(item["ocr_elapsed_ms"]) for item in remaining if item.get("ocr_elapsed_ms") is not None
+    ) or None
+    store.update_owned_session(
+        session_id,
+        identity.owner_type,
+        identity.owner_id,
+        utc_now(),
+        filename=str(first.get("filename") or CHAT_SESSION_FILENAME),
+        content_type=str(first.get("content_type") or CHAT_CONTENT_TYPE),
+        original_path=str(first.get("original_path") or ""),
+        ocr_markdown_path=str(aggregate_path) if cumulative_markdown else None,
+        page_count=total_pages,
+        ocr_elapsed_ms=total_elapsed,
+        status="ocr_complete" if cumulative_markdown else "chat_ready",
+        error=None,
+    )
+    updated = store.get_session(session_id, owner_type=identity.owner_type, owner_id=identity.owner_id)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    return serialize_session_detail(updated)
 
 
 @app.patch("/sessions/{session_id}")
@@ -487,11 +581,6 @@ async def upload_document(
         )
         if existing_session is None:
             raise HTTPException(status_code=404, detail="Session not found.")
-        if has_session_document(existing_session):
-            raise HTTPException(
-                status_code=409,
-                detail="This session already has a document. Start again to attach another file.",
-            )
         if existing_session["status"] in {"uploading", "ocr_running", "answering"}:
             raise HTTPException(status_code=409, detail="Session is busy.")
 
@@ -507,7 +596,8 @@ async def upload_document(
     session_id = session_id or uuid.uuid4().hex
     now = utc_now()
     suffix = Path(filename).suffix.lower()
-    original_path = artifact_owner_dir(UPLOAD_DIR, identity) / f"{session_id}{suffix}"
+    attachment_id = uuid.uuid4().hex
+    original_path = artifact_owner_dir(UPLOAD_DIR, identity) / f"{attachment_id}{suffix}"
     original_path.write_bytes(body)
 
     if existing_session is None:
@@ -517,32 +607,27 @@ async def upload_document(
             owner_id=identity.owner_id,
             filename=filename,
             content_type=content_type,
-            original_path=original_path,
+            original_path="",
             created_at=now,
         )
         prune_sessions_for_identity(identity)
-        store.update_owned_session(
-            session_id,
-            identity.owner_type,
-            identity.owner_id,
-            utc_now(),
-            status="ocr_running",
-        )
-    else:
-        store.update_owned_session(
-            session_id,
-            identity.owner_type,
-            identity.owner_id,
-            now,
-            filename=filename,
-            content_type=content_type,
-            original_path=str(original_path),
-            status="ocr_running",
-            error=None,
-            ocr_markdown_path=None,
-            page_count=None,
-            ocr_elapsed_ms=None,
-        )
+    store.create_attachment(
+        attachment_id=attachment_id,
+        session_id=session_id,
+        filename=filename,
+        content_type=content_type,
+        original_path=original_path,
+        created_at=now,
+        status="ocr_running",
+    )
+    store.update_owned_session(
+        session_id,
+        identity.owner_type,
+        identity.owner_id,
+        now,
+        status="ocr_running",
+        error=None,
+    )
 
     started = time.perf_counter()
     try:
@@ -553,6 +638,14 @@ async def upload_document(
             body,
         )
     except ServiceError as exc:
+        store.update_owned_attachment(
+            attachment_id,
+            identity.owner_type,
+            identity.owner_id,
+            utc_now(),
+            status="ocr_failed",
+            error=str(exc),
+        )
         store.update_owned_session(
             session_id,
             identity.owner_type,
@@ -564,10 +657,10 @@ async def upload_document(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
-    ocr_path = artifact_owner_dir(OCR_DIR, identity) / f"{session_id}.md"
+    ocr_path = artifact_owner_dir(OCR_DIR, identity) / f"{attachment_id}.md"
     ocr_path.write_text(markdown, encoding="utf-8")
-    store.update_owned_session(
-        session_id,
+    store.update_owned_attachment(
+        attachment_id,
         identity.owner_type,
         identity.owner_id,
         utc_now(),
@@ -576,6 +669,41 @@ async def upload_document(
         ocr_markdown_path=str(ocr_path),
         page_count=count_pages(markdown, content_type),
         ocr_elapsed_ms=elapsed_ms,
+    )
+    refreshed = store.get_session(session_id, owner_type=identity.owner_type, owner_id=identity.owner_id)
+    if refreshed is None:
+        raise HTTPException(status_code=500, detail="Session vanished after OCR.")
+    cumulative_markdown = build_cumulative_markdown(refreshed)
+    aggregate_path = artifact_owner_dir(OCR_DIR, identity) / f"{session_id}.md"
+    if cumulative_markdown:
+        aggregate_path.write_text(cumulative_markdown, encoding="utf-8")
+    else:
+        aggregate_path.unlink(missing_ok=True)
+    attachments = list(refreshed.get("attachments") or [])
+    first_attachment = attachments[0] if attachments else {}
+    total_pages = sum(
+        int(attachment["page_count"])
+        for attachment in attachments
+        if attachment.get("page_count") is not None
+    ) or None
+    total_elapsed = sum(
+        int(attachment["ocr_elapsed_ms"])
+        for attachment in attachments
+        if attachment.get("ocr_elapsed_ms") is not None
+    ) or None
+    store.update_owned_session(
+        session_id,
+        identity.owner_type,
+        identity.owner_id,
+        utc_now(),
+        status="ocr_complete",
+        error=None,
+        filename=str(first_attachment.get("filename") or filename),
+        content_type=str(first_attachment.get("content_type") or content_type),
+        original_path=str(first_attachment.get("original_path") or original_path),
+        ocr_markdown_path=str(aggregate_path) if cumulative_markdown else None,
+        page_count=total_pages,
+        ocr_elapsed_ms=total_elapsed,
     )
 
     session = store.get_session(session_id, owner_type=identity.owner_type, owner_id=identity.owner_id)
@@ -606,6 +734,13 @@ async def ask_session(
         existing_messages=existing_messages,
     )
     prompt = build_prompt(user_prompt, ask.mode, has_ocr=bool(markdown))
+    web_sources = fetch_web_sources_if_requested(
+        search_web=ask.search_web,
+        query=prompt,
+        ocr_markdown=markdown,
+    )
+    web_context = build_web_context(web_sources)
+    image_data_urls = image_data_urls_for_session(session)
     now = utc_now()
     if user_prompt:
         store.add_message(session_id=session_id, role="user", content=user_prompt, created_at=now)
@@ -625,6 +760,8 @@ async def ask_session(
             prompt,
             message_history_for_llm(existing_messages),
             ask.thinking_mode,
+            image_data_urls,
+            web_context,
         )
     except ServiceError as exc:
         store.update_owned_session(
@@ -644,6 +781,7 @@ async def ask_session(
         stopped_due_to_max_tokens=bool(answer.get("stopped_due_to_max_tokens")),
         max_tokens_limit=as_int_or_none(answer.get("max_tokens_limit")),
     )
+    answer_text = append_source_links(answer_text, web_sources)
     store.add_message(
         session_id=session_id,
         role="assistant",
@@ -691,6 +829,13 @@ async def ask_session_stream(
         existing_messages=existing_messages,
     )
     prompt = build_prompt(user_prompt, ask.mode, has_ocr=bool(markdown))
+    web_sources = fetch_web_sources_if_requested(
+        search_web=ask.search_web,
+        query=prompt,
+        ocr_markdown=markdown,
+    )
+    web_context = build_web_context(web_sources)
+    image_data_urls = image_data_urls_for_session(session)
     now = utc_now()
     history = message_history_for_llm(existing_messages)
     if user_prompt:
@@ -709,7 +854,14 @@ async def ask_session_stream(
         reasoning_parts: list[str] = []
         final_meta: dict[str, Any] = {}
         try:
-            for event in post_answer_request_stream(markdown, prompt, history, ask.thinking_mode):
+            for event in post_answer_request_stream(
+                markdown,
+                prompt,
+                history,
+                ask.thinking_mode,
+                image_data_urls,
+                web_context,
+            ):
                 event_name = str(event.get("event") or "")
                 data = event.get("data")
                 if not isinstance(data, dict):
@@ -775,6 +927,7 @@ async def ask_session_stream(
             stopped_due_to_max_tokens=bool(final_meta.get("stopped_due_to_max_tokens")),
             max_tokens_limit=as_int_or_none(final_meta.get("max_tokens_limit")),
         )
+        answer_text = append_source_links(answer_text, web_sources)
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         answer_elapsed_ms = as_int(final_meta.get("elapsed_ms"), fallback=elapsed_ms)
@@ -869,6 +1022,8 @@ def post_answer_request(
     prompt: str,
     conversation_history: list[dict[str, str]] | None = None,
     thinking_mode: Literal["fast", "thinking"] = "fast",
+    images: list[str] | None = None,
+    web_context: str = "",
 ) -> dict[str, Any]:
     request_body: dict[str, Any] = {
         "ocr_markdown": markdown,
@@ -877,6 +1032,10 @@ def post_answer_request(
     }
     if conversation_history:
         request_body["conversation_history"] = conversation_history
+    if images:
+        request_body["images"] = images
+    if web_context:
+        request_body["web_context"] = web_context
     payload = json.dumps(request_body).encode("utf-8")
     req = request.Request(
         f"{LLM_SERVICE_URL.rstrip('/')}/v1/answer",
@@ -899,6 +1058,8 @@ def post_answer_request_stream(
     prompt: str,
     conversation_history: list[dict[str, str]] | None = None,
     thinking_mode: Literal["fast", "thinking"] = "fast",
+    images: list[str] | None = None,
+    web_context: str = "",
 ) -> Generator[dict[str, Any], None, None]:
     request_body: dict[str, Any] = {
         "ocr_markdown": markdown,
@@ -907,6 +1068,10 @@ def post_answer_request_stream(
     }
     if conversation_history:
         request_body["conversation_history"] = conversation_history
+    if images:
+        request_body["images"] = images
+    if web_context:
+        request_body["web_context"] = web_context
     payload = json.dumps(request_body).encode("utf-8")
     req = request.Request(
         f"{LLM_SERVICE_URL.rstrip('/')}/v1/answer/stream",
@@ -1042,46 +1207,259 @@ def build_multipart_file_body(
 def serialize_session_detail(session: dict[str, Any]) -> dict[str, Any]:
     data = serialize_session_summary(session)
     data["ocr_markdown"] = ""
-    if session.get("ocr_markdown_path"):
-        path = Path(session["ocr_markdown_path"])
-        if path.exists():
-            data["ocr_markdown"] = path.read_text(encoding="utf-8")
+    data["ocr_markdown"] = read_session_markdown(session, missing_ok=True)
     data["messages"] = session.get("messages", [])
     return data
 
 
 def serialize_session_summary(session: dict[str, Any]) -> dict[str, Any]:
     has_document = has_session_document(session)
+    attachments = serialize_attachments(session)
+    first_attachment = attachments[0] if attachments else None
     return {
         "id": session["id"],
-        "filename": session["filename"],
-        "content_type": session["content_type"],
-        "file_type": file_type_label(session["filename"], session["content_type"]),
+        "filename": str(session.get("filename") or (first_attachment["filename"] if first_attachment else "")),
+        "content_type": first_attachment["content_type"] if first_attachment else session["content_type"],
+        "file_type": file_type_label(
+            first_attachment["filename"] if first_attachment else str(session.get("filename") or ""),
+            first_attachment["content_type"] if first_attachment else session["content_type"],
+        ),
         "has_document": has_document,
         "status": session["status"],
         "error": session.get("error"),
-        "page_count": session.get("page_count"),
+        "page_count": session.get("page_count")
+        if session.get("page_count") is not None
+        else sum(int(item["page_count"]) for item in attachments if item.get("page_count") is not None) or None,
         "created_at": session["created_at"],
         "updated_at": session["updated_at"],
         "ocr_elapsed_ms": session.get("ocr_elapsed_ms"),
         "answer_elapsed_ms": session.get("answer_elapsed_ms"),
-        "thumbnail_url": f"/sessions/{session['id']}/original"
-        if has_document and str(session["content_type"]).startswith("image/")
+        "thumbnail_url": first_attachment["thumbnail_url"]
+        if first_attachment and first_attachment.get("thumbnail_url")
         else None,
+        "attachments": attachments,
     }
 
 
-def read_session_markdown(session: dict[str, Any]) -> str:
+def serialize_attachments(session: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_attachments = session.get("attachments")
+    if not isinstance(raw_attachments, list):
+        raw_attachments = []
+    # A caller may provide an in-memory legacy row (before opening it through
+    # SessionStore).  Keep that row visible while the DB migration catches up.
+    if not raw_attachments and has_session_document_legacy(session):
+        raw_attachments = [
+            {
+                "id": f"legacy-{session['id']}",
+                "filename": session.get("filename") or "upload",
+                "content_type": session.get("content_type") or "application/octet-stream",
+                "original_path": session.get("original_path") or "",
+                "ocr_markdown_path": session.get("ocr_markdown_path"),
+                "status": session.get("status") or "uploading",
+                "error": session.get("error"),
+                "page_count": session.get("page_count"),
+                "ocr_elapsed_ms": session.get("ocr_elapsed_ms"),
+            }
+        ]
+    serialized: list[dict[str, Any]] = []
+    for index, attachment in enumerate(raw_attachments, start=1):
+        filename = str(attachment.get("filename") or "attachment")
+        content_type = str(attachment.get("content_type") or "application/octet-stream")
+        attachment_id = str(attachment.get("id") or f"attachment-{index}")
+        original_path = str(attachment.get("original_path") or "")
+        thumbnail_url = (
+            f"/sessions/{session['id']}/attachments/{attachment_id}/original"
+            if original_path and content_type.startswith("image/")
+            else None
+        )
+        ocr_markdown = ""
+        ocr_path = attachment.get("ocr_markdown_path")
+        if ocr_path:
+            path = Path(str(ocr_path))
+            if path.exists():
+                ocr_markdown = path.read_text(encoding="utf-8")
+        serialized.append(
+            {
+                "id": attachment_id,
+                "filename": filename,
+                "content_type": content_type,
+                "thumbnail_url": thumbnail_url,
+                "status": str(attachment.get("status") or "uploading"),
+                "error": attachment.get("error"),
+                "ocr_markdown": ocr_markdown,
+                "ocr": ocr_markdown,
+                "page_count": attachment.get("page_count"),
+                "ocr_elapsed_ms": attachment.get("ocr_elapsed_ms"),
+                "position": attachment.get("position", index - 1),
+            }
+        )
+    return serialized
+
+
+def get_session_attachment(
+    session: dict[str, Any], attachment_id: str | None
+) -> dict[str, Any] | None:
+    attachments = session.get("attachments")
+    if isinstance(attachments, list) and attachments:
+        if attachment_id:
+            for attachment in attachments:
+                if str(attachment.get("id")) == attachment_id:
+                    return attachment
+            return None
+        return attachments[0]
+    if not attachment_id and has_session_document_legacy(session):
+        return {
+            "id": f"legacy-{session['id']}",
+            "filename": session.get("filename"),
+            "content_type": session.get("content_type"),
+            "original_path": session.get("original_path"),
+        }
+    return None
+
+
+def read_session_markdown(session: dict[str, Any], *, missing_ok: bool = False) -> str:
+    attachments = session.get("attachments")
+    if isinstance(attachments, list) and attachments:
+        markdown = build_cumulative_markdown(session, missing_ok=missing_ok)
+        if markdown:
+            return markdown
     path_value = session.get("ocr_markdown_path")
     if not path_value:
         return ""
-    path = Path(path_value)
+    path = Path(str(path_value))
     if not path.exists():
+        if missing_ok:
+            return ""
         raise HTTPException(status_code=404, detail="OCR Markdown file not found.")
     markdown = path.read_text(encoding="utf-8").strip()
     if not markdown:
         return ""
     return markdown
+
+
+def build_cumulative_markdown(session: dict[str, Any], *, missing_ok: bool = True) -> str:
+    """Join OCR artifacts in attachment order without rewriting their layout."""
+    attachments = session.get("attachments")
+    if not isinstance(attachments, list):
+        return ""
+    parts: list[str] = []
+    for index, attachment in enumerate(attachments, start=1):
+        path_value = attachment.get("ocr_markdown_path")
+        if not path_value:
+            continue
+        path = Path(str(path_value))
+        if not path.exists():
+            if missing_ok:
+                continue
+            raise HTTPException(status_code=404, detail="OCR Markdown file not found.")
+        text = path.read_bytes().decode("utf-8")
+        if not text:
+            continue
+        filename = str(attachment.get("filename") or f"Attachment {index}")
+        # Keep each OCR document byte-for-byte inside a small, deterministic
+        # separator; line wrapping and table spacing from OCR are untouched.
+        parts.append(f"## Attachment {index}: {filename}\n\n{text}")
+    return "\n---\n\n".join(parts)
+
+
+def has_session_document_legacy(session: dict[str, Any]) -> bool:
+    original_path = str(session.get("original_path") or "").strip()
+    return bool(original_path) and session.get("content_type") != CHAT_CONTENT_TYPE
+
+
+def fetch_web_sources_if_requested(
+    *,
+    search_web: bool,
+    query: str,
+    ocr_markdown: str,
+) -> list[dict[str, str | None]]:
+    if not search_web:
+        return []
+    search_query = query.strip() or ocr_markdown.strip()[:2000]
+    if not search_query:
+        raise HTTPException(status_code=400, detail="A search query is required.")
+    try:
+        return search_llm_context(search_query, max_urls=MAX_WEB_SOURCES)
+    except BraveSearchError as exc:
+        # Keep this backend error concise; in particular, never include the
+        # Authorization header or environment value in a client response.
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def build_web_context(sources: list[dict[str, str | None]]) -> str:
+    if not sources:
+        return ""
+    parts: list[str] = []
+    for index, source in enumerate(sources[:MAX_WEB_SOURCES], start=1):
+        title = str(source.get("title") or "Source").strip()
+        url = str(source.get("url") or "").strip()
+        snippet = str(source.get("snippet") or source.get("description") or "").strip()
+        if not url or not snippet:
+            continue
+        parts.append(f"[Source {index}] {title}\nURL: {url}\n{snippet}")
+    context = "\n\n".join(parts)
+    if len(context) <= MAX_WEB_CONTEXT_CHARS:
+        return context
+    suffix = "\n\n[Web context truncated]"
+    return f"{context[: max(MAX_WEB_CONTEXT_CHARS - len(suffix), 1)].rstrip()}{suffix}"
+
+
+def append_source_links(
+    answer_text: str,
+    sources: list[dict[str, str | None]],
+) -> str:
+    text = str(answer_text or "").strip()
+    links: list[str] = []
+    seen: set[str] = set()
+    for source in sources[:MAX_WEB_SOURCES]:
+        url = str(source.get("url") or "").strip()
+        title = str(source.get("title") or "Source").strip()
+        if not url or url in seen or not re.match(r"^https?://", url, re.IGNORECASE):
+            continue
+        seen.add(url)
+        safe_title = re.sub(r"[\r\n]+", " ", title)[:200] or "Source"
+        links.append(f"- [{safe_title}]({url})")
+    if not links:
+        return text
+    block = "\n\nSources:\n" + "\n".join(links)
+    if "\n\nSources:\n" in text:
+        return text
+    return f"{text}{block}" if text else block.lstrip()
+
+
+def image_data_urls_for_session(session: dict[str, Any]) -> list[str]:
+    if not WEB_LLM_VISION_ENABLED:
+        return []
+    data_urls: list[str] = []
+    total_bytes = 0
+    attachments = session.get("attachments")
+    if not isinstance(attachments, list):
+        legacy = get_session_attachment(session, None)
+        attachments = [legacy] if legacy else []
+    for attachment in attachments:
+        if len(data_urls) >= MAX_LLM_IMAGES:
+            break
+        content_type = str(attachment.get("content_type") or "")
+        if not content_type.startswith("image/"):
+            continue
+        path_value = attachment.get("original_path")
+        if not path_value:
+            continue
+        path = Path(str(path_value))
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if size <= 0 or size > MAX_LLM_IMAGE_BYTES or total_bytes + size > MAX_LLM_IMAGE_BYTES * 2:
+            continue
+        try:
+            body = path.read_bytes()
+        except OSError:
+            continue
+        encoded = base64.b64encode(body).decode("ascii")
+        data_urls.append(f"data:{content_type};base64,{encoded}")
+        total_bytes += size
+    return data_urls
 
 
 def validate_empty_prompt_submission(
@@ -1371,9 +1749,41 @@ def static_asset_version() -> str:
 
 
 def delete_session_artifacts(session: dict[str, Any]) -> None:
+    paths: set[str] = set()
     for path_value in (session.get("original_path"), session.get("ocr_markdown_path")):
         if path_value:
+            paths.add(str(path_value))
+    attachments = session.get("attachments")
+    if isinstance(attachments, list):
+        for attachment in attachments:
+            for path_value in (
+                attachment.get("original_path"),
+                attachment.get("thumbnail_path"),
+                attachment.get("ocr_markdown_path"),
+            ):
+                if path_value:
+                    paths.add(str(path_value))
+    for path_value in paths:
+        try:
             Path(path_value).unlink(missing_ok=True)
+        except OSError:
+            # A stale artifact must not turn a successful DB deletion into a
+            # 500; it can be cleaned up by the next maintenance pass.
+            continue
+
+
+def delete_attachment_artifacts(attachment: dict[str, Any]) -> None:
+    for path_value in (
+        attachment.get("original_path"),
+        attachment.get("thumbnail_path"),
+        attachment.get("ocr_markdown_path"),
+    ):
+        if not path_value:
+            continue
+        try:
+            Path(str(path_value)).unlink(missing_ok=True)
+        except OSError:
+            continue
 
 
 def prune_sessions_for_identity(identity: Identity) -> None:
@@ -1387,8 +1797,14 @@ def prune_sessions_for_identity(identity: Identity) -> None:
 
 
 def has_session_document(session: dict[str, Any]) -> bool:
-    original_path = str(session.get("original_path") or "").strip()
-    return bool(original_path) and session.get("content_type") != CHAT_CONTENT_TYPE
+    attachments = session.get("attachments")
+    if isinstance(attachments, list) and attachments:
+        return any(
+            str(attachment.get("content_type") or "") != CHAT_CONTENT_TYPE
+            and bool(str(attachment.get("original_path") or "").strip())
+            for attachment in attachments
+        )
+    return has_session_document_legacy(session)
 
 
 def identity_from_user(user: dict[str, Any]) -> Identity:

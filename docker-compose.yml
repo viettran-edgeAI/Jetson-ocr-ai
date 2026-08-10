@@ -25,6 +25,15 @@ services:
       WEB_APP_SMTP_PASSWORD: ${WEB_APP_SMTP_PASSWORD:-}
       WEB_APP_SMTP_FROM: ${WEB_APP_SMTP_FROM:-}
       WEB_APP_SMTP_STARTTLS: ${WEB_APP_SMTP_STARTTLS:-1}
+      BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+      BRAVE_LLM_CONTEXT_ENDPOINT: ${BRAVE_LLM_CONTEXT_ENDPOINT:-https://api.search.brave.com/res/v1/llm/context}
+      BRAVE_CONTEXT_COUNT: ${BRAVE_CONTEXT_COUNT:-5}
+      BRAVE_CONTEXT_MAX_URLS: ${BRAVE_CONTEXT_MAX_URLS:-3}
+      BRAVE_CONTEXT_MAX_SNIPPETS: ${BRAVE_CONTEXT_MAX_SNIPPETS:-8}
+      BRAVE_CONTEXT_MAX_TOKENS: ${BRAVE_CONTEXT_MAX_TOKENS:-3000}
+      BRAVE_SEARCH_TIMEOUT: ${BRAVE_SEARCH_TIMEOUT:-10}
+      WEB_LLM_VISION_ENABLED: ${WEB_LLM_VISION_ENABLED:-}
+      LLM_MMPROJ_PATH: ${LLM_MMPROJ_PATH:-}
     depends_on:
       ocr:
         condition: service_healthy
@@ -111,6 +120,9 @@ services:
       LLM_FIT: "on"
       LLM_KV_OFFLOAD: 1
       LLM_OP_OFFLOAD: 1
+      LLM_MMPROJ_PATH: ${LLM_MMPROJ_PATH:-}
+      LLM_MMPROJ_OFFLOAD: ${LLM_MMPROJ_OFFLOAD:-1}
+      LLM_MAX_WEB_CONTEXT_CHARS: ${LLM_MAX_WEB_CONTEXT_CHARS:-12000}
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=5).read()"]
       interval: 30s

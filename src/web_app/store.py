@@ -109,6 +109,24 @@ class SessionStore:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS attachments (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    filename TEXT NOT NULL,
+                    content_type TEXT NOT NULL,
+                    original_path TEXT NOT NULL,
+                    thumbnail_path TEXT,
+                    ocr_markdown_path TEXT,
+                    status TEXT NOT NULL DEFAULT 'uploading',
+                    error TEXT,
+                    page_count INTEGER,
+                    ocr_elapsed_ms INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id TEXT NOT NULL,
@@ -135,6 +153,8 @@ class SessionStore:
                     ON sessions(updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_messages_session_id
                     ON messages(session_id, created_at ASC);
+                CREATE INDEX IF NOT EXISTS idx_attachments_session_position
+                    ON attachments(session_id, position ASC, created_at ASC, id ASC);
                 CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_hash
                     ON auth_sessions(token_hash);
                 CREATE INDEX IF NOT EXISTS idx_rate_limit_events_owner_action_created_at
@@ -164,11 +184,62 @@ class SessionStore:
             self._ensure_column(connection, "sessions", "owner_type", "TEXT NOT NULL DEFAULT 'user'")
             self._ensure_column(connection, "sessions", "owner_id", "TEXT NOT NULL DEFAULT 'legacy-owner'")
             self._ensure_column(connection, "messages", "tokens_per_second", "REAL")
+            self._backfill_attachments(connection)
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_sessions_owner_updated_at
                     ON sessions(owner_type, owner_id, updated_at DESC)
                 """
+            )
+
+    def _backfill_attachments(self, connection: sqlite3.Connection) -> None:
+        """Create one attachment for each pre-attachments document session.
+
+        Older databases stored the document directly on ``sessions``.  The
+        migration deliberately keeps those columns intact so old callers can
+        continue reading them, while the new ordered attachment API has a
+        stable row to work with.
+        """
+        rows = connection.execute(
+            """
+            SELECT s.id, s.filename, s.content_type, s.original_path,
+                   s.ocr_markdown_path, s.status, s.error, s.page_count,
+                   s.ocr_elapsed_ms, s.created_at, s.updated_at
+            FROM sessions AS s
+            WHERE COALESCE(TRIM(s.original_path), '') <> ''
+              AND s.content_type <> 'application/x-chat-session'
+              AND NOT EXISTS (
+                  SELECT 1 FROM attachments AS a WHERE a.session_id = s.id
+              )
+            ORDER BY s.created_at ASC, s.id ASC
+            """
+        ).fetchall()
+        for row in rows:
+            session_id = str(row["id"])
+            attachment_id = f"legacy-{session_id}"
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO attachments (
+                    id, session_id, position, filename, content_type,
+                    original_path, thumbnail_path, ocr_markdown_path, status,
+                    error, page_count, ocr_elapsed_ms, created_at, updated_at
+                )
+                VALUES (?, ?, 0, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    attachment_id,
+                    session_id,
+                    str(row["filename"] or "upload"),
+                    str(row["content_type"] or "application/octet-stream"),
+                    str(row["original_path"] or ""),
+                    row["ocr_markdown_path"],
+                    str(row["status"] or "uploading"),
+                    row["error"],
+                    row["page_count"],
+                    row["ocr_elapsed_ms"],
+                    str(row["created_at"]),
+                    str(row["updated_at"]),
+                ),
             )
 
     def _ensure_column(
@@ -724,6 +795,183 @@ class SessionStore:
             raise RuntimeError("failed to create session")
         return session
 
+    def create_attachment(
+        self,
+        *,
+        attachment_id: str,
+        session_id: str,
+        filename: str,
+        content_type: str,
+        original_path: Path | str,
+        created_at: str,
+        position: int | None = None,
+        status: str = "uploading",
+        thumbnail_path: Path | str | None = None,
+    ) -> dict[str, Any]:
+        """Insert an ordered document attachment and return its row."""
+        with self.connect() as connection:
+            if position is None:
+                row = connection.execute(
+                    "SELECT COALESCE(MAX(position), -1) + 1 AS next_position "
+                    "FROM attachments WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                position = int(row["next_position"]) if row else 0
+            connection.execute(
+                """
+                INSERT INTO attachments (
+                    id, session_id, position, filename, content_type,
+                    original_path, thumbnail_path, status, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    attachment_id,
+                    session_id,
+                    int(position),
+                    filename,
+                    content_type,
+                    str(original_path),
+                    str(thumbnail_path) if thumbnail_path else None,
+                    status,
+                    created_at,
+                    created_at,
+                ),
+            )
+        attachment = self.get_attachment(attachment_id, session_id=session_id)
+        if attachment is None:
+            raise RuntimeError("failed to create attachment")
+        return attachment
+
+    def get_attachment(
+        self,
+        attachment_id: str,
+        *,
+        session_id: str | None = None,
+        owner_type: str | None = None,
+        owner_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        where = ["a.id = ?"]
+        values: list[Any] = [attachment_id]
+        if session_id:
+            where.append("a.session_id = ?")
+            values.append(session_id)
+        if owner_type and owner_id:
+            where.extend(["s.owner_type = ?", "s.owner_id = ?"])
+            values.extend([owner_type, owner_id])
+        with self.connect() as connection:
+            row = connection.execute(
+                f"""
+                SELECT a.*
+                FROM attachments AS a
+                JOIN sessions AS s ON s.id = a.session_id
+                WHERE {' AND '.join(where)}
+                """,
+                values,
+            ).fetchone()
+        return dict(row) if row else None
+
+    def update_attachment(self, attachment_id: str, updated_at: str, **fields: Any) -> None:
+        if not fields:
+            return
+        allowed_fields = {
+            "position",
+            "filename",
+            "content_type",
+            "original_path",
+            "thumbnail_path",
+            "ocr_markdown_path",
+            "status",
+            "error",
+            "page_count",
+            "ocr_elapsed_ms",
+        }
+        unknown = set(fields) - allowed_fields
+        if unknown:
+            raise ValueError(f"unsupported attachment fields: {', '.join(sorted(unknown))}")
+        assignments = [f"{key} = ?" for key in fields]
+        values = list(fields.values())
+        assignments.append("updated_at = ?")
+        values.extend([updated_at, attachment_id])
+        with self.connect() as connection:
+            connection.execute(
+                f"UPDATE attachments SET {', '.join(assignments)} WHERE id = ?",
+                values,
+            )
+
+    def update_owned_attachment(
+        self,
+        attachment_id: str,
+        owner_type: str,
+        owner_id: str,
+        updated_at: str,
+        **fields: Any,
+    ) -> None:
+        if not fields:
+            return
+        allowed_fields = {
+            "position",
+            "filename",
+            "content_type",
+            "original_path",
+            "thumbnail_path",
+            "ocr_markdown_path",
+            "status",
+            "error",
+            "page_count",
+            "ocr_elapsed_ms",
+        }
+        unknown = set(fields) - allowed_fields
+        if unknown:
+            raise ValueError(f"unsupported attachment fields: {', '.join(sorted(unknown))}")
+        assignments = [f"{key} = ?" for key in fields]
+        values = list(fields.values())
+        values.extend([updated_at, attachment_id, owner_type, owner_id])
+        assignments.append("updated_at = ?")
+        with self.connect() as connection:
+            connection.execute(
+                f"""
+                UPDATE attachments AS a
+                SET {', '.join(assignments)}
+                WHERE a.id = ?
+                  AND EXISTS (
+                      SELECT 1 FROM sessions AS s
+                      WHERE s.id = a.session_id
+                        AND s.owner_type = ? AND s.owner_id = ?
+                  )
+                """,
+                values,
+            )
+
+    def delete_attachment(
+        self,
+        attachment_id: str,
+        *,
+        owner_type: str | None = None,
+        owner_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        attachment = self.get_attachment(
+            attachment_id,
+            owner_type=owner_type,
+            owner_id=owner_id,
+        )
+        if attachment is None:
+            return None
+        with self.connect() as connection:
+            if owner_type and owner_id:
+                connection.execute(
+                    """
+                    DELETE FROM attachments
+                    WHERE id = ? AND session_id IN (
+                        SELECT id FROM sessions WHERE owner_type = ? AND owner_id = ?
+                    )
+                    """,
+                    (attachment_id, owner_type, owner_id),
+                )
+            else:
+                connection.execute("DELETE FROM attachments WHERE id = ?", (attachment_id,))
+        return attachment
+
     def update_session(self, session_id: str, updated_at: str, **fields: Any) -> None:
         if not fields:
             return
@@ -833,6 +1081,9 @@ class SessionStore:
             return None
         with self.connect() as connection:
             connection.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            # Explicitly delete children even on databases created before the
+            # foreign-key cascade was introduced.
+            connection.execute("DELETE FROM attachments WHERE session_id = ?", (session_id,))
             if owner_type and owner_id:
                 connection.execute(
                     "DELETE FROM sessions WHERE id = ? AND owner_type = ? AND owner_id = ?",
@@ -860,6 +1111,15 @@ class SessionStore:
             ).fetchone()
             if row is None:
                 return None
+            attachments = connection.execute(
+                """
+                SELECT *
+                FROM attachments
+                WHERE session_id = ?
+                ORDER BY position ASC, created_at ASC, id ASC
+                """,
+                (session_id,),
+            ).fetchall()
             messages = connection.execute(
                 """
                 SELECT role, content, elapsed_ms, prompt_tokens, completion_tokens,
@@ -871,6 +1131,7 @@ class SessionStore:
                 (session_id,),
             ).fetchall()
         session = dict(row)
+        session["attachments"] = [dict(attachment) for attachment in attachments]
         session["messages"] = [dict(message) for message in messages]
         return session
 
@@ -921,7 +1182,19 @@ class SessionStore:
             pruned = [dict(row) for row in rows]
             for row in rows:
                 session_id = str(row["id"])
+                attachments = connection.execute(
+                    """
+                    SELECT *
+                    FROM attachments
+                    WHERE session_id = ?
+                    ORDER BY position ASC, created_at ASC, id ASC
+                    """,
+                    (session_id,),
+                ).fetchall()
+                pruned_row = next(item for item in pruned if item["id"] == session_id)
+                pruned_row["attachments"] = [dict(attachment) for attachment in attachments]
                 connection.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+                connection.execute("DELETE FROM attachments WHERE session_id = ?", (session_id,))
                 connection.execute(
                     "DELETE FROM sessions WHERE id = ? AND owner_type = ? AND owner_id = ?",
                     (session_id, owner_type, owner_id),

@@ -225,6 +225,35 @@ require_cmd curl
 
 load_env_file
 
+load_brave_search_key_fallback() {
+  # Keep the F1 integration scoped to this one credential.  Do not source the
+  # sibling .env: it contains unrelated service secrets.
+  if [[ -n "${BRAVE_SEARCH_API_KEY:-}" ]]; then
+    return 0
+  fi
+
+  local fallback_env="$SCRIPT_DIR/../F1_fact_checker/.env"
+  [[ -f "$fallback_env" ]] || return 0
+  local line value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?BRAVE_SEARCH_API_KEY[[:space:]]*=[[:space:]]*(.*)$ ]]; then
+      value="${BASH_REMATCH[2]}"
+      value="${value%%[[:space:]]#*}"
+      value="${value##[[:space:]]}"
+      value="${value%%[[:space:]]}"
+      if [[ ${#value} -ge 2 && ( "${value:0:1}" == '"' || "${value:0:1}" == "'" ) ]]; then
+        value="${value:1:${#value}-2}"
+      fi
+      if [[ -n "$value" ]]; then
+        export BRAVE_SEARCH_API_KEY="$value"
+      fi
+      return 0
+    fi
+  done <"$fallback_env"
+}
+
+load_brave_search_key_fallback
+
 if (( LOCAL_TEST == 1 )); then
   export WEB_APP_COOKIE_SECURE=0
   PUBLIC_CHECK=0

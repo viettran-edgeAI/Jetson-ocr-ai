@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import logging
 import os
@@ -16,7 +18,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from runtime_env import load_default_model_env
 
@@ -49,6 +51,9 @@ DEFAULT_UBATCH_SIZE = int(os.environ.get("LLM_UBATCH_SIZE", "128"))
 DEFAULT_GPU_LAYERS = os.environ.get("LLM_GPU_LAYERS", "auto")
 DEFAULT_MAX_OCR_CHARS = int(os.environ.get("LLM_MAX_OCR_CHARS", "12000"))
 DEFAULT_MAX_HISTORY_CHARS = int(os.environ.get("LLM_MAX_HISTORY_CHARS", "4000"))
+DEFAULT_MAX_WEB_CONTEXT_CHARS = int(os.environ.get("LLM_MAX_WEB_CONTEXT_CHARS", "12000"))
+MAX_IMAGE_COUNT = int(os.environ.get("LLM_MAX_IMAGE_COUNT", "6"))
+MAX_IMAGE_BYTES = int(os.environ.get("LLM_MAX_IMAGE_BYTES", str(8 * 1024 * 1024)))
 LLM_MTP_ENABLED = os.environ.get("LLM_MTP_ENABLED", "0").lower() in {
     "1",
     "true",
@@ -76,6 +81,14 @@ LLM_OP_OFFLOAD = os.environ.get("LLM_OP_OFFLOAD", "1").lower() not in {
     "0",
     "false",
     "no",
+}
+_LLM_MMPROJ_PATH = os.environ.get("LLM_MMPROJ_PATH", "").strip()
+LLM_MMPROJ_PATH = Path(_LLM_MMPROJ_PATH) if _LLM_MMPROJ_PATH else None
+LLM_MMPROJ_OFFLOAD = os.environ.get("LLM_MMPROJ_OFFLOAD", "1").lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
 }
 STARTUP_TIMEOUT_SECONDS = float(os.environ.get("LLM_STARTUP_TIMEOUT_SECONDS", "240"))
 REQUEST_TIMEOUT_SECONDS = float(os.environ.get("LLM_REQUEST_TIMEOUT_SECONDS", "300"))
@@ -111,6 +124,30 @@ class AnswerRequest(BaseModel):
     conversation_history: list[ConversationMessage] = Field(default_factory=list, max_length=40)
     max_tokens: int | None = Field(default=None, ge=1, le=2048)
     thinking_mode: Literal["fast", "thinking"] = "fast"
+    images: list[str] = Field(default_factory=list, max_length=MAX_IMAGE_COUNT)
+    web_context: str = Field(default="", max_length=20000)
+
+    @field_validator("images", mode="before")
+    @classmethod
+    def validate_images(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("images must be a list of data URLs")
+        if len(value) > MAX_IMAGE_COUNT:
+            raise ValueError(f"at most {MAX_IMAGE_COUNT} images are allowed")
+        normalized: list[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                image_url = item.get("image_url")
+                if isinstance(image_url, dict):
+                    item = image_url.get("url")
+                elif isinstance(image_url, str):
+                    item = image_url
+            if not isinstance(item, str):
+                raise ValueError("each image must be a base64 data URL")
+            normalized.append(validate_image_data_url(item))
+        return normalized
 
 
 class AnswerResponse(BaseModel):
@@ -135,13 +172,14 @@ class LlamaServer:
     async def start(self) -> None:
         if EXTERNAL_LLAMA_SERVER:
             await wait_for_llama_ready()
-            await maybe_warmup_llama()
             return
 
         if not MODEL_PATH.exists():
             raise RuntimeError(f"LLM model file does not exist: {MODEL_PATH}")
         if LLM_MTP_ENABLED and LLM_SPEC_DRAFT_MODEL_PATH and not LLM_SPEC_DRAFT_MODEL_PATH.exists():
             raise RuntimeError(f"LLM MTP draft model file does not exist: {LLM_SPEC_DRAFT_MODEL_PATH}")
+        if LLM_MMPROJ_PATH is not None and not LLM_MMPROJ_PATH.exists():
+            raise RuntimeError(f"LLM mmproj file does not exist: {LLM_MMPROJ_PATH}")
 
         self.process = subprocess.Popen(
             build_llama_command(),
@@ -180,6 +218,11 @@ SYSTEM_PROMPT = (
     "Answer directly and concisely. Do not repeat the question in your answer. "
     "Use OCR Markdown context when relevant. If OCR lacks details, you may use "
     "general knowledge and briefly state that OCR lacked details."
+)
+FAST_MODE_PROMPT = "Do not include hidden reasoning. Provide only the final answer."
+THINKING_MODE_PROMPT = (
+    "Thinking mode is active. If reasoning is useful, keep it concise and user-facing, "
+    "then provide the final answer."
 )
 
 
@@ -422,6 +465,10 @@ def build_llama_command() -> list[str]:
         command.extend(["--flash-attn", LLM_FLASH_ATTN])
     if LLM_FIT:
         command.extend(["--fit", LLM_FIT])
+    if LLM_MMPROJ_PATH is not None:
+        command.extend(["--mmproj", str(LLM_MMPROJ_PATH)])
+        if not LLM_MMPROJ_OFFLOAD:
+            command.append("--no-mmproj-offload")
     if not WARMUP_ON_STARTUP:
         command.append("--no-warmup")
     if not LLM_KV_OFFLOAD:
@@ -441,12 +488,13 @@ def build_chat_payload(
         prepared_ocr = prepare_ocr_markdown(request.ocr_markdown)
 
     has_ocr_context = bool(prepared_ocr["text"])
+    prepared_web = prepare_web_context(request.web_context)
     truncation_note = ""
     if prepared_ocr["truncated"]:
         truncation_note = (
             "\n\nNote: OCR Markdown was truncated to fit the configured context cap."
         )
-    system_content = SYSTEM_PROMPT
+    system_content = build_system_prompt(request.thinking_mode)
     if has_ocr_context:
         ocr_context = (
             "OCR Markdown appended to this session:\n"
@@ -455,11 +503,25 @@ def build_chat_payload(
             "```"
             f"{truncation_note}"
         )
-        system_content = f"{SYSTEM_PROMPT}\n\n{ocr_context}"
+        system_content = f"{system_content}\n\n{ocr_context}"
+    if prepared_web["text"]:
+        web_context = (
+            "Backend web context from Brave Search. Use it only as supporting "
+            "evidence and preserve source URLs when citing it:\n"
+            f"{prepared_web['text']}"
+        )
+        if prepared_web["truncated"]:
+            web_context += "\n\n[Web context truncated to the configured cap]"
+        system_content = f"{system_content}\n\n{web_context}"
 
-    messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system_content}]
     messages.extend(prepare_conversation_history(request.conversation_history))
-    messages.append({"role": "user", "content": request.user_request.strip()})
+    messages.append(
+        {
+            "role": "user",
+            "content": build_final_user_content(request.user_request.strip(), request.images),
+        }
+    )
 
     payload: dict[str, Any] = {
         "model": MODEL_ALIAS,
@@ -474,6 +536,35 @@ def build_chat_payload(
         payload["stream_options"] = {"include_usage": True}
     apply_thinking_mode(payload, request.thinking_mode)
     return payload
+
+
+def build_system_prompt(thinking_mode: str | bool) -> str:
+    thinking_enabled = (
+        thinking_mode
+        if isinstance(thinking_mode, bool)
+        else thinking_mode == "thinking"
+    )
+    mode_prompt = (
+        THINKING_MODE_PROMPT
+        if thinking_enabled and not DISABLE_THINKING
+        else FAST_MODE_PROMPT
+    )
+    return f"{SYSTEM_PROMPT}\n\n{mode_prompt}"
+
+
+def build_final_user_content(user_request: str, images: list[str]) -> str | list[dict[str, Any]]:
+    """Build the OpenAI-compatible final text/image content array."""
+    if not images:
+        return user_request
+    content: list[dict[str, Any]] = [{"type": "text", "text": user_request}]
+    content.extend(
+        {
+            "type": "image_url",
+            "image_url": {"url": image_url},
+        }
+        for image_url in images
+    )
+    return content
 
 
 def build_warmup_payload() -> dict[str, Any]:
@@ -533,6 +624,41 @@ def prepare_ocr_markdown(ocr_markdown: str) -> dict[str, Any]:
         f"of {original_chars} characters]"
     )
     return {"text": trimmed, "original_chars": original_chars, "truncated": True}
+
+
+def prepare_web_context(web_context: str) -> dict[str, Any]:
+    text = str(web_context or "").strip()
+    original_chars = len(text)
+    if original_chars <= DEFAULT_MAX_WEB_CONTEXT_CHARS:
+        return {"text": text, "original_chars": original_chars, "truncated": False}
+    suffix = "\n[Web context truncated]"
+    budget = max(DEFAULT_MAX_WEB_CONTEXT_CHARS - len(suffix), 1)
+    return {
+        "text": f"{text[:budget].rstrip()}{suffix}",
+        "original_chars": original_chars,
+        "truncated": True,
+    }
+
+
+def validate_image_data_url(value: str) -> str:
+    """Accept only bounded inline raster data; never fetch remote image URLs."""
+    if not isinstance(value, str) or not value.startswith("data:"):
+        raise ValueError("images must use data:image/...;base64 URLs")
+    header, separator, encoded = value.partition(",")
+    if separator != "," or ";base64" not in header.lower():
+        raise ValueError("images must use base64 data URLs")
+    mime_type = header[5:].split(";", 1)[0].strip().lower()
+    if mime_type not in {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"}:
+        raise ValueError("unsupported image MIME type")
+    if not encoded:
+        raise ValueError("image data URL is empty")
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError, binascii.Error) as exc:
+        raise ValueError("image data URL is not valid base64") from exc
+    if not decoded or len(decoded) > MAX_IMAGE_BYTES:
+        raise ValueError("image data URL exceeds the configured size limit")
+    return value
 
 
 async def wait_for_llama_ready(process: subprocess.Popen[str] | None = None) -> None:

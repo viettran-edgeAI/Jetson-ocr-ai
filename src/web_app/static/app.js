@@ -3,9 +3,11 @@ const state = {
   activeMode: null,
   translateLanguage: "Vietnamese",
   thinkingMode: "fast",
+  searchWeb: false,
   isBusy: false,
-  pendingFile: null,
-  pendingPreviewUrl: null,
+  pendingFiles: [],
+  uploadIndex: -1,
+  attachments: [],
   currentMessages: [],
   currentMarkdown: "",
   hasDocument: false,
@@ -27,17 +29,20 @@ const els = {
   dropZone: document.querySelector("#dropZone"),
   fileInput: document.querySelector("#fileInput"),
   uploadButton: document.querySelector("#uploadButton"),
+  composerAttachButton: document.querySelector("#composerAttachButton"),
   convertButton: document.querySelector("#convertButton"),
-  startAgainButton: document.querySelector("#startAgainButton"),
+  queueCount: document.querySelector("#queueCount"),
+  searchWebButton: document.querySelector("#searchWebButton"),
+  searchWebChip: document.querySelector("#searchWebChip"),
   selectedFilePreview: document.querySelector("#selectedFilePreview"),
   uploadState: document.querySelector("#uploadState"),
   uploadLimitStatus: document.querySelector("#uploadLimitStatus"),
-  dropTitle: document.querySelector("#dropTitle"),
   outputCard: document.querySelector("#outputCard"),
   emptyOutput: document.querySelector("#emptyOutput"),
   ocrPanel: document.querySelector("#ocrPanel"),
   ocrResult: document.querySelector("#ocrResult"),
   copyOcrButton: document.querySelector("#copyOcrButton"),
+  copyOcrPanelButton: document.querySelector("#copyOcrPanelButton"),
   copyOcrStatus: document.querySelector("#copyOcrStatus"),
   answerResult: document.querySelector("#answerResult"),
   promptForm: document.querySelector("#promptForm"),
@@ -52,6 +57,8 @@ const els = {
   promptInput: document.querySelector("#promptInput"),
   sendButton: document.querySelector("#sendButton"),
   sessionList: document.querySelector("#sessionList"),
+  newSessionButton: document.querySelector("#newSessionButton"),
+  workspaceStatus: document.querySelector("#workspaceStatus"),
   themeToggle: document.querySelector("#themeToggle"),
   accountStatus: document.querySelector("#accountStatus"),
   accountName: document.querySelector("#accountName"),
@@ -111,7 +118,6 @@ const iconMore = `
 `;
 
 document.addEventListener("DOMContentLoaded", async () => {
-  ensureDynamicChatStyles();
   bindEvents();
   hideOcrContent();
   await loadAccountState();
@@ -121,23 +127,20 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 function bindEvents() {
   on(els.uploadButton, "click", () => els.fileInput?.click());
+  on(els.composerAttachButton, "click", () => els.fileInput?.click());
   on(els.convertButton, "click", convertSelectedFile);
-  on(els.startAgainButton, "click", () => {
-    if (state.isBusy) return;
-    clearSelectedFile();
-    setStatus("Ready for a new upload.");
-  });
   on(els.copyOcrButton, "click", copyCurrentOcr);
+  on(els.copyOcrPanelButton, "click", copyCurrentOcr);
   on(els.fileInput, "change", () => {
-    const file = els.fileInput.files?.[0];
-    if (file) attachFile(file);
+    const files = [...(els.fileInput.files || [])];
+    if (files.length) attachFiles(files);
     els.fileInput.value = "";
   });
 
   on(els.dropZone, "click", (event) => {
     if (event.target.closest("button")) return;
     if (!canAttachDocument()) {
-      setStatus("Click Start again or remove the current file to load a new one.");
+      setStatus("Wait for the current OCR run to finish before adding files.");
       return;
     }
     els.fileInput.click();
@@ -146,7 +149,7 @@ function bindEvents() {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       if (!canAttachDocument()) {
-        setStatus("Click Start again or remove the current file to load a new one.");
+        setStatus("Wait for the current OCR run to finish before adding files.");
         return;
       }
       els.fileInput.click();
@@ -163,25 +166,33 @@ function bindEvents() {
     event.preventDefault();
     els.dropZone.classList.remove("is-dragging");
     if (!canAttachDocument()) {
-      setStatus("Click Start again or remove the current file to load a new one.");
+      setStatus("Wait for the current OCR run to finish before adding files.");
       return;
     }
-    const file = event.dataTransfer?.files?.[0];
-    if (file) attachFile(file);
+    const files = [...(event.dataTransfer?.files || [])];
+    if (files.length) attachFiles(files);
   });
 
   document.addEventListener("paste", (event) => {
-    const file = [...(event.clipboardData?.files || [])].find((item) =>
+    const clipboardFiles = [...(event.clipboardData?.files || [])].filter((item) =>
       item.type.startsWith("image/")
     );
-    if (file) {
+    const itemImages = [...(event.clipboardData?.items || [])]
+      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+      .map((item, index) => {
+        const blob = item.getAsFile();
+        if (!blob) return null;
+        return new File([blob], `pasted-image-${index + 1}.png`, { type: blob.type || "image/png" });
+      })
+      .filter(Boolean);
+    const files = clipboardFiles.length ? clipboardFiles : itemImages;
+    if (files.length) {
       event.preventDefault();
       if (!canAttachDocument()) {
-        setStatus("Click Start again or remove the current file to load a new one.");
+        setStatus("Wait for the current OCR run to finish before adding files.");
         return;
       }
-      const pasted = new File([file], "pasted-image.png", { type: file.type || "image/png" });
-      attachFile(pasted);
+      attachFiles(files.map((file, index) => file.name ? file : new File([file], `pasted-image-${index + 1}.png`, { type: file.type || "image/png" })));
     }
   });
 
@@ -207,6 +218,14 @@ function bindEvents() {
     event.preventDefault();
     askQuestion();
   });
+  on(els.promptInput, "input", autosizePrompt);
+  on(els.promptInput, "keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    if (!state.isBusy) askQuestion();
+  });
+  on(els.searchWebButton, "click", toggleSearchWeb);
+  on(els.newSessionButton, "click", startNewSession);
   on(els.thinkingModeButton, "click", (event) => {
     event.stopPropagation();
     toggleThinkingModeMenu();
@@ -271,141 +290,162 @@ function bindEvents() {
 
   setThinkingMode(state.thinkingMode);
   setTranslateLanguage(state.translateLanguage);
+  renderSearchWebState();
+  renderPendingFiles();
+  autosizePrompt();
 }
 
-function attachFile(file) {
+function attachFiles(files) {
   if (state.isBusy) return;
-  if (!canAttachDocument()) {
-    setStatus("Click Start again or remove the current file to load a new one.");
-    return;
+  const incoming = Array.isArray(files) ? files : [files];
+  const validFiles = [];
+  const errors = [];
+  incoming.filter(Boolean).forEach((file) => {
+    const validation = validateFile(file);
+    if (validation) {
+      errors.push(`${file.name || "File"}: ${validation}`);
+      return;
+    }
+    const duplicate = state.pendingFiles.some((entry) =>
+      entry.file.name === file.name && entry.file.size === file.size && entry.file.lastModified === file.lastModified
+    );
+    if (!duplicate) validFiles.push(file);
+  });
+  if (errors.length) setStatus(errors[0], "error");
+  validFiles.forEach((file) => {
+    state.pendingFiles.push({
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      file,
+      previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : "",
+      status: "queued",
+    });
+  });
+  renderPendingFiles();
+  if (validFiles.length) {
+    setStatus(`${state.pendingFiles.length} file${state.pendingFiles.length === 1 ? "" : "s"} queued. Press Run OCR when ready.`, "success");
   }
-  const validation = validateFile(file);
-  if (validation) {
-    setStatus(validation, "error");
-    return;
-  }
+}
 
-  const attachToCurrentSession = Boolean(state.activeSessionId && !state.hasDocument);
-  clearSelectedFile({
-    keepSession: attachToCurrentSession,
-    keepOutput: attachToCurrentSession,
+function clearPendingFiles() {
+  state.pendingFiles.forEach((entry) => {
+    if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
   });
-  state.pendingFile = file;
-  if (file.type.startsWith("image/")) {
-    state.pendingPreviewUrl = URL.createObjectURL(file);
-  }
-  renderSelectedFile({
-    filename: file.name,
-    contentType: file.type,
-    previewUrl: state.pendingPreviewUrl,
-    removable: true,
-  });
-  uploadFile(file);
+  state.pendingFiles = [];
+  state.uploadIndex = -1;
+  renderPendingFiles();
+}
+
+function removePendingFile(id) {
+  if (state.isBusy) return;
+  const index = state.pendingFiles.findIndex((entry) => entry.id === id);
+  if (index < 0) return;
+  const [removed] = state.pendingFiles.splice(index, 1);
+  if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+  renderPendingFiles();
+  setStatus(state.pendingFiles.length ? `${state.pendingFiles.length} file${state.pendingFiles.length === 1 ? "" : "s"} queued.` : "File removed.");
 }
 
 function clearSelectedFile(options = {}) {
-  if (state.pendingPreviewUrl) {
-    URL.revokeObjectURL(state.pendingPreviewUrl);
-  }
-  state.pendingFile = null;
-  state.pendingPreviewUrl = null;
+  clearPendingFiles();
   if (!options.keepSession) {
     state.activeSessionId = null;
     state.currentMessages = [];
     state.currentMarkdown = "";
+    state.attachments = [];
     state.hasDocument = false;
   }
-  if (!options.keepOutput) {
-    clearOutput();
-  }
+  if (!options.keepOutput) clearOutput();
   state.activeMode = null;
+  state.searchWeb = false;
   state.translateLanguage = "Vietnamese";
-  els.promptInput.value = "";
+  if (els.promptInput) {
+    els.promptInput.value = "";
+    autosizePrompt();
+  }
   setQuickActionActive(null);
   setTranslateLanguage(state.translateLanguage);
+  renderSearchWebState();
   clearCopyFeedback();
-  els.selectedFilePreview.hidden = true;
-  els.selectedFilePreview.innerHTML = "";
-  els.convertButton.hidden = true;
-  if (els.startAgainButton) {
-    els.startAgainButton.hidden = true;
-  }
-  els.uploadButton.hidden = false;
-  els.dropTitle.textContent = "Attach a document anytime";
   setStatus("");
 }
 
-function renderSelectedFile({ filename, contentType, previewUrl, removable }) {
-  const isImage = String(contentType || "").startsWith("image/");
-  const media = isImage && previewUrl
-    ? `<img src="${previewUrl}" alt="" />`
-    : iconFile;
-  els.selectedFilePreview.innerHTML = `
-    <div class="selected-thumb">${media}</div>
-    <div class="selected-meta">
-      <strong>${escapeHtml(filename)}</strong>
-      <span>${escapeHtml(fileTypeLabel(filename, contentType))}</span>
-    </div>
-    ${removable ? `<button class="remove-file" type="button" aria-label="Remove selected file" title="Remove selected file">&times;</button>` : ""}
-  `;
+function renderPendingFiles() {
+  if (!els.selectedFilePreview) return;
+  const count = state.pendingFiles.length;
+  if (els.queueCount) {
+    els.queueCount.textContent = `${count} file${count === 1 ? "" : "s"}`;
+  }
+  if (els.convertButton) els.convertButton.disabled = state.isBusy || count === 0;
+  if (!count) {
+    els.selectedFilePreview.hidden = true;
+    els.selectedFilePreview.innerHTML = "";
+    return;
+  }
   els.selectedFilePreview.hidden = false;
-  els.uploadButton.hidden = true;
-  els.convertButton.hidden = true;
-  if (els.startAgainButton) {
-    els.startAgainButton.hidden = false;
-  }
-  els.dropTitle.textContent = filename;
-  const remove = els.selectedFilePreview.querySelector(".remove-file");
-  if (remove) {
-    remove.addEventListener("click", (event) => {
+  els.selectedFilePreview.innerHTML = state.pendingFiles.map((entry, index) => {
+    const file = entry.file;
+    const isImage = file.type.startsWith("image/");
+    const media = isImage && entry.previewUrl ? `<img src="${entry.previewUrl}" alt="" />` : iconFile;
+    const running = state.uploadIndex === index;
+    const status = running ? "Processing…" : entry.status === "done" ? "Done" : fileTypeLabel(file.name, file.type);
+    return `
+      <div class="queued-file${running ? " is-processing" : ""}${entry.status === "done" ? " is-done" : ""}" data-queued-file="${escapeHtml(entry.id)}">
+        <div class="selected-thumb">${media}</div>
+        <div class="selected-meta"><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><span>${escapeHtml(status)}</span></div>
+        <button class="remove-file" type="button" data-remove-file="${escapeHtml(entry.id)}" aria-label="Remove ${escapeHtml(file.name)}" title="Remove file">&times;</button>
+      </div>
+    `;
+  }).join("");
+  els.selectedFilePreview.querySelectorAll("[data-remove-file]").forEach((button) => {
+    on(button, "click", (event) => {
       event.stopPropagation();
-      clearSelectedFile();
+      removePendingFile(button.dataset.removeFile);
     });
-  }
+  });
 }
 
 async function convertSelectedFile() {
-  if (!state.pendingFile || state.isBusy) return;
-  await uploadFile(state.pendingFile);
-}
-
-async function uploadFile(file) {
-  const attachToCurrentSession = Boolean(state.activeSessionId && !state.hasDocument);
+  if (!state.pendingFiles.length || state.isBusy) return;
   state.isBusy = true;
   setControlsBusy(true);
-  setStatus(`Running OCR for ${file.name}...`);
-  if (!attachToCurrentSession) {
-    clearOutput();
-  }
-
-  const body = new FormData();
-  body.append("file", file);
-  const uploadUrl = attachToCurrentSession
-    ? `/sessions/upload?session_id=${encodeURIComponent(state.activeSessionId)}`
-    : "/sessions/upload";
-
+  clearOutput();
+  const queue = state.pendingFiles.slice();
+  let completed = 0;
   try {
-    const response = await fetch(uploadUrl, { method: "POST", body });
-    const data = await readJsonResponse(response);
-    state.activeSessionId = data.id;
-    state.pendingFile = null;
-    if (state.pendingPreviewUrl) {
-      URL.revokeObjectURL(state.pendingPreviewUrl);
-      state.pendingPreviewUrl = null;
+    for (let index = 0; index < queue.length; index += 1) {
+      const entry = queue[index];
+      const activeIndex = state.pendingFiles.findIndex((item) => item.id === entry.id);
+      state.uploadIndex = activeIndex;
+      entry.status = "processing";
+      renderPendingFiles();
+      setStatus(`Running OCR ${index + 1} of ${queue.length}: ${entry.file.name}…`);
+      const body = new FormData();
+      body.append("file", entry.file);
+      const uploadUrl = state.activeSessionId
+        ? `/sessions/upload?session_id=${encodeURIComponent(state.activeSessionId)}`
+        : "/sessions/upload";
+      const response = await fetch(uploadUrl, { method: "POST", body });
+      const data = await readJsonResponse(response);
+      state.activeSessionId = data.id;
+      entry.status = "done";
+      completed += 1;
+      renderSession(data);
+      if (data.rate_limit) renderRateLimit(data.rate_limit);
+      if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+      state.pendingFiles = state.pendingFiles.filter((item) => item.id !== entry.id);
+      renderPendingFiles();
+      await loadRecentSessions();
     }
-    renderSession(data);
-    const elapsedText = formatElapsedSeconds(data.ocr_elapsed_ms);
-    const completeText = elapsedText ? `OCR complete in ${elapsedText}.` : "OCR complete.";
-    setStatus(completeText, "success");
-    if (data.rate_limit) {
-      renderRateLimit(data.rate_limit);
-    }
-    await loadRecentSessions();
+    state.uploadIndex = -1;
+    setStatus(`${completed} file${completed === 1 ? "" : "s"} processed. OCR context is ready.`, "success");
   } catch (error) {
-    setStatus(error.message, "error");
+    state.uploadIndex = -1;
+    renderPendingFiles();
+    setStatus(completed ? `${completed} file${completed === 1 ? "" : "s"} processed. ${error.message}` : error.message, "error");
   } finally {
     state.isBusy = false;
     setControlsBusy(false);
+    renderPendingFiles();
   }
 }
 
@@ -418,9 +458,43 @@ async function submitQuickAction(mode) {
   await askQuestion({ prompt, mode: resolvedMode });
 }
 
+function toggleSearchWeb() {
+  if (state.isBusy) return;
+  state.searchWeb = !state.searchWeb;
+  renderSearchWebState();
+}
+
+function renderSearchWebState() {
+  if (els.searchWebButton) {
+    els.searchWebButton.classList.toggle("is-active", state.searchWeb);
+    els.searchWebButton.setAttribute("aria-pressed", state.searchWeb ? "true" : "false");
+  }
+  if (els.searchWebChip) els.searchWebChip.hidden = !state.searchWeb;
+}
+
+function startNewSession() {
+  if (state.isBusy) return;
+  clearSelectedFile();
+  state.showAllSessions = false;
+  setStatus("New chat ready.", "success");
+  els.promptInput?.focus();
+}
+
+function autosizePrompt() {
+  const input = els.promptInput;
+  if (!input) return;
+  input.style.height = "auto";
+  const minHeight = 38;
+  const maxHeight = 144;
+  const nextHeight = Math.min(Math.max(input.scrollHeight, minHeight), maxHeight);
+  input.style.height = `${nextHeight}px`;
+  input.style.overflowY = input.scrollHeight > maxHeight ? "auto" : "hidden";
+}
+
 async function askQuestion(options = {}) {
   const prompt = (options.prompt || els.promptInput.value).trim();
   const mode = options.mode ?? state.activeMode;
+  const searchWeb = options.searchWeb ?? state.searchWeb;
   const allowEmptyPrompt = !prompt && state.hasDocument && !state.currentMessages.length;
   if (!prompt && !allowEmptyPrompt) {
     els.promptInput.focus();
@@ -458,6 +532,7 @@ async function askQuestion(options = {}) {
         prompt,
         mode,
         thinking_mode: state.thinkingMode,
+        search_web: Boolean(searchWeb),
       },
       onToken(delta, kind) {
         const tokenKind = kind || (useThinkingTrace ? "reasoning" : "answer");
@@ -508,8 +583,11 @@ async function askQuestion(options = {}) {
       renderSession(data);
     }
     els.promptInput.value = "";
+    autosizePrompt();
     state.activeMode = null;
+    state.searchWeb = false;
     setQuickActionActive(null);
+    renderSearchWebState();
     await loadRecentSessions();
   } catch (error) {
     renderMessages([
@@ -729,13 +807,9 @@ async function restoreSession(id) {
     const response = await fetch(`/sessions/${id}`);
     const data = await readJsonResponse(response);
     state.activeSessionId = data.id;
-    state.pendingFile = null;
-    if (state.pendingPreviewUrl) {
-      URL.revokeObjectURL(state.pendingPreviewUrl);
-      state.pendingPreviewUrl = null;
-    }
+    clearPendingFiles();
     renderSession(data);
-    const label = data.has_document ? data.filename : "chat session";
+    const label = data.has_document || data.attachments?.length ? data.filename : "chat session";
     setStatus(`Restored ${label}.`, "success");
   } catch (error) {
     setStatus(error.message, "error");
@@ -809,25 +883,40 @@ function renderSession(session) {
   state.activeSessionId = session.id;
   state.currentMessages = session.messages || [];
   state.currentMarkdown = session.ocr_markdown || "";
-  state.hasDocument = Boolean(session.has_document);
-  if (state.hasDocument) {
-    renderSelectedFile({
-      filename: session.filename,
-      contentType: session.content_type,
-      previewUrl: session.thumbnail_url,
-      removable: true,
-    });
-    els.convertButton.hidden = true;
-    els.uploadButton.hidden = true;
+  state.attachments = normalizeAttachments(session);
+  state.hasDocument = Boolean(session.has_document || state.attachments.length);
+  if (!state.pendingFiles.length) renderPendingFiles();
+  if (state.currentMarkdown) {
+    showOcrContent(renderMarkdown(state.currentMarkdown, { preserveWhitespace: true }));
   } else {
-    renderChatOnlySessionShell();
+    hideOcrContent();
   }
-
-  hideOcrContent();
   clearCopyFeedback();
 
   renderMessages(state.currentMessages);
   updateOutputPlaceholderVisibility();
+}
+
+function normalizeAttachments(session) {
+  const raw = Array.isArray(session?.attachments) ? session.attachments : [];
+  if (raw.length) {
+    return raw.map((attachment, index) => ({
+      ...attachment,
+      id: attachment.id || `${session.id || "session"}-${index}`,
+      filename: attachment.filename || attachment.name || `Attachment ${index + 1}`,
+      content_type: attachment.content_type || attachment.contentType || "",
+      thumbnail_url: attachment.thumbnail_url || attachment.thumbnailUrl || null,
+      ocr_markdown: attachment.ocr_markdown ?? attachment.ocr ?? attachment.markdown ?? attachment.text ?? "",
+    }));
+  }
+  if (!session?.has_document && !session?.ocr_markdown) return [];
+  return [{
+    id: `${session.id || "session"}-attachment-0`,
+    filename: session.filename || "OCR document",
+    content_type: session.content_type || "",
+    thumbnail_url: session.thumbnail_url || null,
+    ocr_markdown: session.ocr_markdown || "",
+  }];
 }
 
 function renderAccountState(identity) {
@@ -944,14 +1033,7 @@ function prettyTierName(tier) {
 }
 
 function renderChatOnlySessionShell() {
-  els.selectedFilePreview.hidden = true;
-  els.selectedFilePreview.innerHTML = "";
-  els.convertButton.hidden = true;
-  els.uploadButton.hidden = false;
-  if (els.startAgainButton) {
-    els.startAgainButton.hidden = !state.activeSessionId;
-  }
-  els.dropTitle.textContent = "Attach a document anytime";
+  clearPendingFiles();
 }
 
 function renderMessages(messages) {
@@ -967,7 +1049,9 @@ function renderMessages(messages) {
   els.answerResult.innerHTML = visibleMessages
     .map((message, index) => {
       const role = message.role === "user" ? "user" : "assistant";
-      const label = role === "assistant" ? "Jetson AI" : "";
+      const label = role === "assistant"
+        ? (message.is_ocr_result ? `OCR · ${message.attachment_name || "document"}` : "Jetson AI")
+        : "";
       const errorClass = message.error ? " is-error" : "";
       const content = role === "user"
         ? message.is_ocr_result
@@ -1018,7 +1102,7 @@ function renderMessages(messages) {
             ${thinkingBox}
             ${
               role === "assistant"
-                ? `<div class="chat-bubble-content" data-chat-content ${content ? "" : "hidden"}>${content ? renderMarkdown(content) : ""}</div>`
+                ? `<div class="chat-bubble-content" data-chat-content ${content ? "" : "hidden"}>${content ? renderMarkdown(content, { preserveWhitespace: Boolean(message.is_ocr_result) }) : ""}</div>`
                 : content
                   ? `<div class="chat-bubble-content">${renderMarkdown(content, { preserveWhitespace: Boolean(message.is_ocr_result) })}</div>`
                   : ""
@@ -1353,27 +1437,33 @@ function clearOutput() {
 }
 
 function setStatus(message, kind = "") {
-  els.uploadState.textContent = message;
-  els.uploadState.className = `state-text ${kind}`.trim();
+  if (els.uploadState) {
+    els.uploadState.textContent = message || "";
+    els.uploadState.className = `state-text ${kind}`.trim();
+  }
+  if (els.workspaceStatus) {
+    els.workspaceStatus.textContent = message || (kind === "error" ? "Needs attention" : "Ready");
+    els.workspaceStatus.className = `status-pill${kind ? ` ${kind}` : ""}`;
+  }
 }
 
 function setControlsBusy(isBusy) {
-  els.uploadButton.disabled = isBusy;
-  els.convertButton.disabled = isBusy;
-  if (els.startAgainButton) {
-    els.startAgainButton.disabled = isBusy;
-  }
-  els.sendButton.disabled = isBusy;
+  if (els.uploadButton) els.uploadButton.disabled = isBusy;
+  if (els.composerAttachButton) els.composerAttachButton.disabled = isBusy;
+  if (els.convertButton) els.convertButton.disabled = isBusy || !state.pendingFiles.length;
+  if (els.sendButton) els.sendButton.disabled = isBusy;
+  if (els.searchWebButton) els.searchWebButton.disabled = isBusy;
   if (els.thinkingModeButton) {
     els.thinkingModeButton.disabled = isBusy;
   }
   els.thinkingModeMenu?.querySelectorAll("button").forEach((button) => {
     button.disabled = isBusy;
   });
-  els.fileInput.disabled = isBusy;
+  if (els.fileInput) els.fileInput.disabled = isBusy;
   if (els.copyOcrButton) {
     els.copyOcrButton.disabled = isBusy;
   }
+  if (els.copyOcrPanelButton) els.copyOcrPanelButton.disabled = isBusy;
   if (els.selectSessionsButton) {
     els.selectSessionsButton.disabled = isBusy;
   }
@@ -1582,6 +1672,9 @@ function renderMarkdown(value, options = {}) {
     }
     if (!line) {
       flushList();
+      if (preserveWhitespace) {
+        html.push('<p class="ocr-line ocr-blank" aria-hidden="true">&nbsp;</p>');
+      }
       continue;
     }
     if (/^<!--.*-->$/.test(line)) {
@@ -1744,7 +1837,7 @@ function normalizeQuickActionMode(mode) {
 }
 
 function canAttachDocument() {
-  return !state.pendingFile && !state.hasDocument && !state.isBusy;
+  return !state.isBusy;
 }
 
 async function copyCurrentOcr() {
@@ -1928,13 +2021,14 @@ function reconcileSelectedSessions(sessions) {
 }
 
 function showOcrContent(html) {
-  if (!els.ocrResult) return;
-  els.ocrResult.innerHTML = html;
-  if (els.ocrPanel) {
-    els.ocrPanel.hidden = false;
+  // OCR is rendered once as synthetic assistant messages in the unified chat.
+  // Keep the legacy nodes inert so copy/session contracts remain available
+  // without introducing a second OCR display.
+  if (els.ocrPanel) els.ocrPanel.hidden = true;
+  if (els.ocrResult) {
+    els.ocrResult.innerHTML = "";
+    els.ocrResult.hidden = true;
   }
-  els.ocrResult.hidden = false;
-  queueMathRender(els.ocrResult);
 }
 
 function decorateSessionWithThinkingTrace(session, thinkingTrace) {
@@ -1956,7 +2050,7 @@ function hideOcrContent() {
   if (!els.ocrResult) return;
   els.ocrResult.innerHTML = "";
   if (els.ocrPanel) {
-    els.ocrPanel.hidden = false;
+    els.ocrPanel.hidden = true;
   }
   els.ocrResult.hidden = true;
 }
@@ -1967,31 +2061,44 @@ function isOcrVisible() {
 
 function buildVisibleMessages(messages) {
   const rawMessages = Array.isArray(messages) ? messages : [];
-  if (!shouldPrependOcrMessage(rawMessages)) {
-    return rawMessages;
-  }
-  return [
-    {
-      role: "user",
-      content: cleanedOcrMarkdownForCopy(state.currentMarkdown),
+  const ocrMessages = state.attachments
+    .map((attachment, index) => ({
+      role: "assistant",
+      content: String(attachment.ocr_markdown || ""),
       is_ocr_result: true,
       synthetic_ocr_message: true,
-    },
-    ...rawMessages,
-  ];
+      attachment_name: attachment.filename || `Attachment ${index + 1}`,
+      answer_complete: true,
+    }))
+    .filter((message) => message.content);
+  if (!ocrMessages.length && state.currentMarkdown) {
+    ocrMessages.push({
+      role: "assistant",
+      content: String(state.currentMarkdown),
+      is_ocr_result: true,
+      synthetic_ocr_message: true,
+      attachment_name: "OCR context",
+      answer_complete: true,
+    });
+  }
+  if (!ocrMessages.length) return rawMessages;
+  return [...ocrMessages, ...rawMessages];
 }
 
 function shouldPrependOcrMessage(messages) {
-  const ocrText = cleanedOcrMarkdownForCopy(state.currentMarkdown);
-  if (!ocrText) return false;
-  const firstMessage = Array.isArray(messages) && messages.length ? messages[0] : null;
-  if (!firstMessage || firstMessage.role !== "user") return true;
-  return cleanedOcrMarkdownForCopy(firstMessage.content) !== ocrText;
+  return buildOcrMessages().length > 0;
+}
+
+function buildOcrMessages() {
+  const attachments = state.attachments
+    .map((attachment) => String(attachment.ocr_markdown || ""))
+    .filter(Boolean);
+  return attachments.length ? attachments : (state.currentMarkdown ? [state.currentMarkdown] : []);
 }
 
 function mapRawMessageIndexToVisibleIndex(rawMessages, rawIndex) {
   if (!Number.isInteger(rawIndex) || rawIndex < 0) return rawIndex;
-  return shouldPrependOcrMessage(rawMessages) ? rawIndex + 1 : rawIndex;
+  return shouldPrependOcrMessage(rawMessages) ? rawIndex + buildOcrMessages().length : rawIndex;
 }
 
 function isAssistantMessageComplete(message, index, visibleMessages) {
@@ -2002,67 +2109,6 @@ function isAssistantMessageComplete(message, index, visibleMessages) {
   if (message.answer_complete === false) return false;
   if (message.thinking_in_progress) return false;
   return true;
-}
-
-function ensureDynamicChatStyles() {
-  if (document.getElementById("dynamic-chat-overrides")) {
-    return;
-  }
-  const style = document.createElement("style");
-  style.id = "dynamic-chat-overrides";
-  style.textContent = `
-    .ocr-panel {
-      position: sticky;
-      top: 0;
-      z-index: 5;
-      border-bottom: 1px solid var(--line);
-      background: rgba(247, 250, 255, 0.96);
-    }
-    .ocr-toolbar {
-      position: static !important;
-      top: auto !important;
-    }
-    body.dark .ocr-panel {
-      background: rgba(22, 32, 54, 0.96);
-    }
-    .chat-message.user .chat-bubble {
-      color: #1b2747 !important;
-      border: 1px solid #d8e1ec !important;
-      background: #ffffff !important;
-    }
-    .chat-message.user .chat-bubble code {
-      color: #1b2747 !important;
-      background: #eef2ff !important;
-    }
-    .chat-message.assistant .chat-bubble {
-      color: #1b2747 !important;
-      border: 1px solid #d8e1ec !important;
-      background: #f2f4f7 !important;
-    }
-    .chat-bubble-footer {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      min-height: 20px;
-      margin-top: 8px;
-    }
-    .chat-bubble-footer .chat-bubble-meta {
-      margin-top: 0;
-    }
-    .copy-answer-button {
-      min-height: 20px;
-      padding: 0 6px;
-      border: 1px solid var(--line-strong);
-      border-radius: 5px;
-      color: #2f426f;
-      background: linear-gradient(180deg, #ffffff, #f5f8ff);
-      font-size: 11px;
-      font-weight: 700;
-      line-height: 1;
-    }
-  `;
-  document.head.appendChild(style);
 }
 
 function on(element, eventName, handler) {

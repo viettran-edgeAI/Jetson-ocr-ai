@@ -11,6 +11,8 @@ It accepts:
 - user prompts
 - conversation history
 - optional OCR Markdown from `ocr-service`
+- bounded inline raster image data URLs when the web-app vision gate is enabled
+- bounded supporting web context returned by the web-app's backend search client
 
 It returns grounded answers through a local `llama-server` process backed by a GGUF model.
 
@@ -51,6 +53,8 @@ Docker Compose runs this target model with Gemma 4 MTP speculative decoding enab
 This can be overridden with:
 
 - `LLM_MODEL_PATH`
+- `LLM_MMPROJ_PATH` optionally points to a compatible multimodal projector (`mmproj`) file. When set, the service validates the file before startup and adds `--mmproj` to the `llama-server` command.
+- `LLM_MMPROJ_OFFLOAD` controls projector offload and defaults to enabled.
 
 Local host runs read `configs/models.host.env` by default. Docker Compose loads `configs/models.container.env` and mounts the same external model root at `/models`.
 
@@ -64,7 +68,7 @@ Key runtime settings:
 - `LLAMA_SERVER_URL` defaults to `http://127.0.0.1:18080`
 - `LLM_HOST` defaults to `0.0.0.0`
 - `LLM_PORT` defaults to `8081`
-- `LLM_MODEL_ALIAS` defaults to `gemma-4-E2B-it-Q4_K_M`
+- `LLM_MODEL_ALIAS` defaults to `gemma-4-E2B-it-qat-UD-Q4_K_XL`
 
 External-server mode:
 
@@ -79,7 +83,7 @@ Returns a small health response once `llama-server` is ready:
 ```json
 {
   "status": "ok",
-  "model": "gemma-4-E2B-it-Q4_K_M"
+  "model": "gemma-4-E2B-it-qat-UD-Q4_K_XL"
 }
 ```
 
@@ -96,6 +100,8 @@ Request body uses the `AnswerRequest` model:
 - `conversation_history`: list of prior `user` / `assistant` messages
 - `max_tokens`: optional override
 - `thinking_mode`: `fast` or `thinking`
+- `images`: optional list of base64 `data:image/...` URLs
+- `web_context`: optional supporting context assembled by the private web-app search integration
 
 Response body uses the `AnswerResponse` model:
 
@@ -108,6 +114,8 @@ Response body uses the `AnswerResponse` model:
 - `total_tokens`
 - `ocr_chars`
 - `ocr_truncated`
+- `stopped_due_to_max_tokens`
+- `max_tokens_limit`
 
 ### `POST /v1/answer/stream`
 
@@ -143,12 +151,16 @@ Fields:
 - `conversation_history`
 - `max_tokens`
 - `thinking_mode`
+- `images`
+- `web_context`
 
 Important limits:
 
 - message content is capped at 8000 characters per history item
 - conversation history is capped at 40 items
 - `max_tokens` is limited to 2048 when provided
+- image input is capped at 6 images and 8 MiB per decoded image by default; only PNG, JPEG/JPG, WebP, and GIF data URLs are accepted, and remote image URLs are rejected
+- `web_context` is accepted up to 20000 characters and is truncated for prompt assembly at `LLM_MAX_WEB_CONTEXT_CHARS` (12000 by default)
 
 ## Prompt Assembly
 
@@ -163,9 +175,17 @@ The service builds the final chat payload in `build_chat_payload()`.
 
 If OCR text is present, the service inserts it into the system prompt as fenced Markdown and instructs the model to use it as the primary document context.
 
+### Web context
+
+When `web_context` is present, the service adds it to the system prompt as supporting Brave Search evidence and instructs the model to preserve source URLs when citing it. The service does not fetch the web or hold the Brave credential; `web-app` performs that backend-only integration. Context over the configured cap is annotated as truncated.
+
+### Image context
+
+When validated `images` are present, the final user message uses OpenAI-compatible text plus `image_url` content parts. The service accepts only bounded inline base64 data URLs and never fetches remote URLs. This path is usable only when `llama-server` has a compatible multimodal projector configured through `LLM_MMPROJ_PATH`.
+
 ### No OCR context
 
-If no OCR Markdown is attached, the system prompt tells the model that no document context is available yet and that the user should attach a document if they are asking about one.
+If no OCR Markdown is attached, no OCR block is appended; the model receives the system prompt, bounded conversation history, and current user request.
 
 ### Conversation history
 
@@ -182,7 +202,7 @@ The service supports two modes:
 - `fast`
 - `thinking`
 
-`thinking` is only active when `LLM_DISABLE_THINKING` is not set.
+`thinking` is only active when `LLM_DISABLE_THINKING` is false.
 
 When thinking mode is enabled:
 
@@ -221,6 +241,11 @@ Relevant knobs:
 - `LLM_BATCH_SIZE` defaults to `512`
 - `LLM_UBATCH_SIZE` defaults to `128`
 - `LLM_GPU_LAYERS` defaults to `auto`
+- `LLM_MAX_OCR_CHARS` defaults to `12000`
+- `LLM_MAX_HISTORY_CHARS` defaults to `4000`
+- `LLM_MAX_WEB_CONTEXT_CHARS` defaults to `12000`
+- `LLM_MAX_IMAGE_COUNT` defaults to `6`
+- `LLM_MAX_IMAGE_BYTES` defaults to `8388608` (8 MiB per decoded image)
 
 Additional optional flags:
 
@@ -251,6 +276,8 @@ Startup controls:
 - `LLM_REQUEST_TIMEOUT_SECONDS` defaults to `300`
 
 If the backend process exits early or never becomes ready, startup fails. With the MTP profile, Docker Compose disables llama.cpp warmup and CUDA graph capture via `LLM_WARMUP_ON_STARTUP=0` and `GGML_CUDA_DISABLE_GRAPHS=1` to reduce startup memory pressure on Jetson.
+
+If `LLM_MMPROJ_PATH` is set but the file is missing, startup fails. The current host does not have compatible mmproj weights; configuring the optional path is therefore required for actual visual inference rather than text-only OCR-grounded inference.
 
 ## Response Parsing
 
@@ -303,5 +330,10 @@ The LLM service returns:
 - optional reasoning text for UI display
 - token usage metadata when available
 - OCR context size and truncation flags
+- image and web context are passed only when supplied by the web app and accepted by the configured bounds
 
-That allows the web app to render the answer, keep the OCR context visible, and optionally show a Thinking panel without losing the final response.
+That allows the web app to render the answer, keep per-attachment OCR messages visible, append web source links, and optionally show a Thinking panel without losing the final response. Auth, session ownership, streaming, and cache-control remain web-app responsibilities.
+
+## Runtime limitations
+
+This is a private local service, not a public multimodal gateway. It depends on a ready `llama-server` and compatible GGUF model files. OCR, conversation history, web context, image count, and decoded image bytes are bounded before prompt assembly. Without a compatible mmproj file, image requests cannot provide visual inference even though the request contract supports bounded image data URLs.
